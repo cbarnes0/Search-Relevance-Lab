@@ -33,6 +33,20 @@ services:
       retries: 5
       start_period: 10s
 
+  qdrant:
+    image: qdrant/qdrant:v1.9.4
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 volumes:
   postgres_data:
   typesense_data:
+  qdrant_data:
