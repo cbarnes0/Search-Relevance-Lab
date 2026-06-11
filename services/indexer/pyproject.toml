@@ -1,0 +1,14 @@
+[project]
+name = "indexer"
+version = "0.1.0"
+description = "Search Relevance Lab — indexer service"
+requires-python = ">=3.12"
+dependencies = [
+    "qdrant-client>=1.18.0",
+    "typesense>=2.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.17",
+]
