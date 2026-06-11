@@ -87,6 +87,9 @@ services:
       QDRANT_PORT: 6333
       IR_DATASETS_HOME: /data/ir_datasets
     volumes:
+      # Live source: indexer scripts appear without rebuilding the image.
+      # (Deps live in /opt/venv, outside /app, so this mount doesn't shadow them.)
+      - ./services/indexer:/app
       # Bind mount: host-downloaded dataset cache appears live in the container.
       - ./data/ir_datasets:/data/ir_datasets
     depends_on:
