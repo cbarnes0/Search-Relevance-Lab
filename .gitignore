@@ -2,6 +2,12 @@
 .env
 .env.local
 
+# Datasets (downloaded corpus cache — not repo source)
+/data/
+
+# Host-side throwaway venv for dataset acquisition
+.venv-host/
+
 # CLAUDE.md is session context, not source of truth
 CLAUDE.md
 

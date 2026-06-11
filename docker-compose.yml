@@ -75,12 +75,23 @@ services:
   indexer:
     build: ./services/indexer
     environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
       TYPESENSE_HOST: typesense
       TYPESENSE_PORT: 8108
       TYPESENSE_API_KEY: ${TYPESENSE_API_KEY}
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
+      IR_DATASETS_HOME: /data/ir_datasets
+    volumes:
+      # Bind mount: host-downloaded dataset cache appears live in the container.
+      - ./data/ir_datasets:/data/ir_datasets
     depends_on:
+      postgres:
+        condition: service_healthy
       typesense:
         condition: service_healthy
       qdrant:
