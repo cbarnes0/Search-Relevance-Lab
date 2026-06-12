@@ -8,6 +8,7 @@ dependencies = []
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
+    "pytrec-eval-terrier>=0.5.10",
     "ruff>=0.15.17",
 ]
 
