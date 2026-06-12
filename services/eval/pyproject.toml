@@ -1,0 +1,22 @@
+[project]
+name = "eval"
+version = "0.1.0"
+description = "Search Relevance Lab — evaluation harness (metrics, runner, persistence)"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.15.17",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
