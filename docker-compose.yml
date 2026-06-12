@@ -61,8 +61,15 @@ services:
       TYPESENSE_API_KEY: ${TYPESENSE_API_KEY}
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+      EMBEDDING_DIM: ${EMBEDDING_DIM}
+      HF_HOME: /data/hf_cache
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
     volumes:
       - ./services/api:/app
+      # Same model cache the indexer uses — load weights, never download.
+      - ./data/hf_cache:/data/hf_cache
     depends_on:
       postgres:
         condition: service_healthy
