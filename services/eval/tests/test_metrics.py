@@ -16,7 +16,7 @@ The fixture is small enough to verify every expected value on paper:
 
 import pytest
 
-from metrics import precision_at_k, recall_at_k, reciprocal_rank
+from metrics import ndcg_at_k, precision_at_k, recall_at_k, reciprocal_rank
 
 QRELS = {"d1": 2, "d2": 1, "d3": 0, "d5": 1}
 RANKED = ["d1", "d3", "d2", "d4", "d6"]
@@ -112,3 +112,57 @@ class TestReciprocalRank:
 
     def test_empty_results(self):
         assert reciprocal_rank([], QRELS, k=5) == 0.0
+
+
+class TestNdcgAtK:
+    """Linear gain (gain = grade), discount = log2(rank + 1).
+
+    Hand arithmetic for the fixture (QRELS grades: d1=2, d2=1, d3=0, d5=1):
+
+        ideal grade order: [2, 1, 1]
+        IDCG@5 = 2/log2(2) + 1/log2(3) + 1/log2(4)
+               = 2.0      + 0.63093   + 0.5        = 3.13093
+    """
+
+    def test_perfect_ranking_scores_one(self):
+        # [d1, d2, d5] is the ideal order; trailing grade-0/unjudged docs
+        # contribute 0 gain and cost nothing. DCG == IDCG -> exactly 1.0.
+        assert ndcg_at_k(["d1", "d2", "d5", "d4", "d6"], QRELS, k=5) == pytest.approx(
+            1.0
+        )
+
+    def test_fixture_ranking(self):
+        # RANKED = [d1, d3, d2, d4, d6]
+        # DCG@5  = 2/log2(2) + 0/log2(3) + 1/log2(4) + 0 + 0 = 2.5
+        # nDCG@5 = 2.5 / 3.13093 = 0.79849
+        # (Penalized for d2 sitting at rank 3 instead of 2, and for d5
+        #  missing entirely -- IDCG comes from the qrels, not the ranking.)
+        assert ndcg_at_k(RANKED, QRELS, k=5) == pytest.approx(0.79849, abs=1e-4)
+
+    def test_k_truncates_both_dcg_and_idcg(self):
+        # k=2: DCG@2  = 2/log2(2) + 0/log2(3)  = 2.0
+        #      IDCG@2 = 2/log2(2) + 1/log2(3)  = 2.63093  (ideal list cut at k too!)
+        # nDCG@2 = 2 / 2.63093 = 0.76019
+        assert ndcg_at_k(RANKED, QRELS, k=2) == pytest.approx(0.76019, abs=1e-4)
+
+    def test_equal_grades_swap_is_free(self):
+        # d2 and d5 both have grade 1: exchanging them changes nothing.
+        a = ndcg_at_k(["d2", "d5", "d4"], QRELS, k=3)
+        b = ndcg_at_k(["d5", "d2", "d4"], QRELS, k=3)
+        assert a == pytest.approx(b)
+
+    def test_higher_grade_earlier_scores_higher(self):
+        # The graded-relevance payoff: [grade 2, grade 1] beats [grade 1, grade 2].
+        # Binary metrics can't see this difference at all.
+        assert ndcg_at_k(["d1", "d2"], QRELS, k=2) > ndcg_at_k(["d2", "d1"], QRELS, k=2)
+
+    def test_empty_qrels(self):
+        # IDCG = 0 -> guard, not ZeroDivisionError.
+        assert ndcg_at_k(RANKED, {}, k=5) == 0.0
+
+    def test_all_grades_zero(self):
+        assert ndcg_at_k(RANKED, {"d1": 0, "d3": 0}, k=5) == 0.0
+
+    def test_empty_results(self):
+        # DCG = 0, IDCG = 3.13093 -> 0/3.13093.
+        assert ndcg_at_k([], QRELS, k=5) == 0.0

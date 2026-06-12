@@ -1,3 +1,6 @@
+import math
+
+
 def relevant_ids(qrels: dict[str, int]) -> set[str]:
     """Doc ids judged relevant (grade > 0).
 
@@ -52,3 +55,36 @@ def reciprocal_rank(ranked_ids: list[str], qrels: dict[str, int], k: int) -> flo
             return 1.0 / rank
 
     return 0.0
+
+
+def ndcg_at_k(ranked_ids: list[str], qrels: dict[str, int], k: int) -> float:
+    """Normalized discounted cumulative gain over the top-k results.
+
+    Linear gain (gain = grade), matching the trec_eval/BEIR lineage we
+    validate against -- NOT the 2^rel - 1 web-search variant. Discount is
+    log2(rank + 1). The ideal ranking is the qrels grades sorted descending,
+    truncated at k just like the actual ranking. Returns 0.0 when the query
+    has no relevant docs (IDCG = 0).
+    """
+    top_k = ranked_ids[:k]
+    gains = []
+    for item in top_k:
+        gains.append(qrels.get(item, 0))
+
+    ideal_gains = sorted(qrels.values(), reverse=True)[:k]
+
+    actual_dcg, idcg = dcg(gains), dcg(ideal_gains)
+
+    if idcg == 0:
+        return 0.0
+
+    return actual_dcg / idcg
+
+
+def dcg(gains: list[int]) -> float:
+    """Discounted cumulative gain: sum of gain / log2(rank + 1), rank from 1."""
+    return_value = 0.0
+    for rank, item in enumerate(gains, start=1):
+        return_value += item / math.log2(rank + 1)
+
+    return return_value
