@@ -1,38 +1,53 @@
 # Indexer Service
 
-One-shot ingestion service. Connects to Typesense and Qdrant, round-trips a
-dummy document in each, and exits. Used to verify both search backends are
-reachable and writable.
+One-shot tool service. Loads the NFCorpus corpus into Postgres and builds the
+lexical (Typesense) and vector (Qdrant) search indexes. Runs under the `tools`
+compose profile (not part of `docker compose up`).
 
-## Run (via compose)
+All scripts are **idempotent** — safe to re-run; they upsert rather than
+duplicate.
+
+## Scripts
+
+| Script | Action |
+|---|---|
+| `ingest.py` | Load documents, queries, qrels into Postgres (`schema.sql`). Pydantic-validated, batch-upserted. |
+| `index_lexical.py` | Read documents from Postgres, (re)build the Typesense `documents` collection. |
+| `index_vector.py` | Read documents, embed with `bge-small-en-v1.5`, upsert vectors into Qdrant. |
+| `query_vector.py "<q>"` | Quick semantic-search check against Qdrant. |
+| `main.py` | Phase 1 backend connectivity smoke test. |
+
+## Run (via compose / make)
 
 ```bash
-docker compose run --rm indexer
+make ingest          # docker compose run --rm indexer python ingest.py
+make index-lexical
+make index-vector
+make index           # all three in order
+
+# semantic search check
+docker compose run --rm indexer python query_vector.py "heart attack"
 ```
 
-## Run locally (dev)
+## Data sources
 
-```bash
-cd services/indexer
-uv sync
-TYPESENSE_HOST=localhost TYPESENSE_PORT=8108 TYPESENSE_API_KEY=local-dev-key \
-QDRANT_HOST=localhost QDRANT_PORT=6333 \
-uv run python main.py
-```
+The dataset and model are downloaded on the **host** (the container network is
+locked down) and bind-mounted in:
 
-## Expected output
+- `IR_DATASETS_HOME=/data/ir_datasets` ← `./data/ir_datasets` (NFCorpus cache)
+- `HF_HOME=/data/hf_cache` ← `./data/hf_cache` (model weights; `HF_HUB_OFFLINE=1`)
 
-```
-[INFO] Indexer starting
-[INFO] Typesense: created collection ...
-[INFO] Typesense: wrote document
-[INFO] Typesense: read back document ...
-[INFO] Typesense: cleaned up collection
-[INFO] Typesense: OK
-[INFO] Qdrant: created collection ...
-[INFO] Qdrant: wrote point
-[INFO] Qdrant: read back point ...
-[INFO] Qdrant: cleaned up collection
-[INFO] Qdrant: OK
-[INFO] Indexer finished successfully
-```
+See `scripts/host_check.py` and `scripts/host_download_model.py` in the repo root.
+
+## Schema
+
+`schema.sql` defines `documents`, `queries`, `qrels`. Natural keys (dataset
+doc/query IDs); `qrels.doc_id` is FK-constrained to `documents`; `relevance` is
+graded `SMALLINT` (0/1/2). See the file for the full rationale.
+
+## Notes
+
+- Embedding model/dims come from `EMBEDDING_MODEL` / `EMBEDDING_DIM` (env).
+- `qdrant-client` is pinned `<1.10` to match the Qdrant server (`v1.9.4`).
+- Documents are embedded without an instruction prefix; queries use the bge
+  retrieval prefix (see `query_vector.py`).
