@@ -16,7 +16,7 @@ The fixture is small enough to verify every expected value on paper:
 
 import pytest
 
-from metrics import precision_at_k, recall_at_k
+from metrics import precision_at_k, recall_at_k, reciprocal_rank
 
 QRELS = {"d1": 2, "d2": 1, "d3": 0, "d5": 1}
 RANKED = ["d1", "d3", "d2", "d4", "d6"]
@@ -76,3 +76,39 @@ class TestRecallAtK:
         # Looking deeper can only find more: recall@k never goes down as k grows.
         values = [recall_at_k(RANKED, QRELS, k=k) for k in range(1, 8)]
         assert values == sorted(values)
+
+
+class TestReciprocalRank:
+    def test_first_relevant_at_rank_1(self):
+        # RANKED = [d1, ...], d1 relevant -> 1/1
+        # (If your rank counter starts at 0, this divides by zero.)
+        assert reciprocal_rank(RANKED, QRELS, k=5) == 1.0
+
+    def test_first_relevant_at_rank_3_skipping_grade_zero(self):
+        # [d3, d4, d2]: d3 judged 0, d4 unjudged -> first RELEVANT is d2 at
+        # rank 3 -> 1/3. An off-by-one rank counter gives 1/2 here instead.
+        assert reciprocal_rank(["d3", "d4", "d2", "d1"], QRELS, k=4) == pytest.approx(
+            1 / 3
+        )
+
+    def test_only_first_relevant_counts(self):
+        # d2 at rank 2 sets the score; d1 and d5 right after add NOTHING.
+        ranked = ["d4", "d2", "d1", "d5"]
+        assert reciprocal_rank(ranked, QRELS, k=4) == 0.5
+        # Same first-hit rank, no extra relevant docs after: identical score.
+        assert reciprocal_rank(["d4", "d2", "d6", "d7"], QRELS, k=4) == 0.5
+
+    def test_first_relevant_beyond_k_scores_zero(self):
+        # d1 sits at rank 5 but k=3 truncates first: nothing relevant in
+        # window -> 0.0. (Documents our RR@k choice; trec_eval's recip_rank
+        # has no cutoff and would score this 1/5.)
+        assert reciprocal_rank(["d3", "d4", "d6", "d7", "d1"], QRELS, k=3) == 0.0
+
+    def test_no_relevant_docs_in_ranking(self):
+        assert reciprocal_rank(["d3", "d4", "d6"], QRELS, k=3) == 0.0
+
+    def test_empty_qrels(self):
+        assert reciprocal_rank(RANKED, {}, k=5) == 0.0
+
+    def test_empty_results(self):
+        assert reciprocal_rank([], QRELS, k=5) == 0.0

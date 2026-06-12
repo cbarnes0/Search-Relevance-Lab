@@ -36,3 +36,19 @@ def recall_at_k(ranked_ids: list[str], qrels: dict[str, int], k: int) -> float:
     hits = sum(1 for item in top_k if item in relevant)
 
     return hits / relevant_qrels
+
+
+def reciprocal_rank(ranked_ids: list[str], qrels: dict[str, int], k: int) -> float:
+    """
+    truncates at k (so RR@k, unlike trec_eval's uncutoff recip_rank),
+    returns 0.0 when nothing relevant lands in the window,
+    and per-query — the mean that puts the M in MRR lives in the runner
+    """
+    top_k = ranked_ids[:k]
+    relevant = relevant_ids(qrels)
+
+    for rank, item in enumerate(top_k, start=1):
+        if item in relevant:
+            return 1.0 / rank
+
+    return 0.0
