@@ -4,14 +4,28 @@ version = "0.1.0"
 description = "Search Relevance Lab — indexer service"
 requires-python = ">=3.12"
 dependencies = [
-    "qdrant-client>=1.18.0",
+    # Pinned to match the Qdrant server (compose: v1.9.4). Client 1.18 dropped
+    # .search() for a newer API that needs server >=1.10.
+    "qdrant-client>=1.9.0,<1.10.0",
     "typesense>=2.0.0",
     "psycopg[binary]>=3.2.0",
     "ir-datasets>=0.5.9",
     "pydantic>=2.7.0",
+    "sentence-transformers>=3.0.0",
+    "torch>=2.2.0",
 ]
 
 [dependency-groups]
 dev = [
     "ruff>=0.15.17",
 ]
+
+# Pull torch from the CPU-only wheel index — avoids dragging in ~2GB of CUDA
+# libraries we can't use on a CPU-only lab box.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

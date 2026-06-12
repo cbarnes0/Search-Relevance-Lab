@@ -86,12 +86,20 @@ services:
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
       IR_DATASETS_HOME: /data/ir_datasets
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+      EMBEDDING_DIM: ${EMBEDDING_DIM}
+      HF_HOME: /data/hf_cache
+      # Model weights are pre-downloaded to the mounted cache — never hit the network.
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
     volumes:
       # Live source: indexer scripts appear without rebuilding the image.
       # (Deps live in /opt/venv, outside /app, so this mount doesn't shadow them.)
       - ./services/indexer:/app
       # Bind mount: host-downloaded dataset cache appears live in the container.
       - ./data/ir_datasets:/data/ir_datasets
+      # Bind mount: host-downloaded model weights (no HF download inside container).
+      - ./data/hf_cache:/data/hf_cache
     depends_on:
       postgres:
         condition: service_healthy
