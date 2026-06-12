@@ -1,61 +1,60 @@
-type HealthResponse = {
-  status: "healthy" | "degraded";
-  backends: {
-    postgres: boolean;
-    typesense: boolean;
-    qdrant: boolean;
-  };
-};
+// Server component (Pattern A). Reads the query from the URL, fetches BOTH
+// backends server-side in parallel, and renders results as HTML. The fetch runs
+// inside the web container, so it uses the internal Docker hostname (API_URL =
+// http://api:8000) at runtime — the browser never calls the API directly.
 
-async function getHealth(): Promise<HealthResponse | null> {
-  const apiUrl = process.env.API_URL ?? "http://localhost:8000";
+import SearchBox from "./SearchBox";
+import { ResultsComparison } from "./results";
+import type { SearchResponse } from "./types";
+
+const API_URL = process.env.API_URL ?? "http://localhost:8000";
+
+async function search(
+  q: string,
+  backend: "lexical" | "vector",
+): Promise<SearchResponse | null> {
   try {
-    const res = await fetch(`${apiUrl}/health`, { cache: "no-store" });
+    const res = await fetch(
+      `${API_URL}/search?q=${encodeURIComponent(q)}&backend=${backend}&k=10`,
+      { cache: "no-store" },
+    );
+    if (!res.ok) return null;
     return res.json();
   } catch {
     return null;
   }
 }
 
-function StatusBadge({ ok }: { ok: boolean }) {
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>;
+}) {
+  const { q } = await searchParams; // Next 16: searchParams is async
+  const query = q?.trim() ?? "";
+
+  let lexical: SearchResponse | null = null;
+  let vector: SearchResponse | null = null;
+  if (query) {
+    [lexical, vector] = await Promise.all([
+      search(query, "lexical"),
+      search(query, "vector"),
+    ]);
+  }
+
   return (
-    <span style={{ color: ok ? "#4ade80" : "#f87171" }}>
-      {ok ? "healthy" : "unreachable"}
-    </span>
-  );
-}
+    <main style={{ padding: "2rem", maxWidth: "1100px", margin: "2rem auto" }}>
+      <h1 style={{ marginBottom: "0.25rem" }}>Search Relevance Lab</h1>
+      <p style={{ color: "#888", marginBottom: "2rem" }}>
+        Lexical vs. vector retrieval — NFCorpus
+      </p>
 
-export default async function Page() {
-  const health = await getHealth();
+      <SearchBox initialQuery={query} />
 
-  return (
-    <main style={{ padding: "2rem", maxWidth: "480px", margin: "4rem auto" }}>
-      <h1 style={{ marginBottom: "0.5rem" }}>Search Relevance Lab</h1>
-      <p style={{ color: "#888", marginBottom: "2rem" }}>Backend status</p>
-
-      {health === null ? (
-        <p style={{ color: "#f87171" }}>Could not reach API</p>
+      {query ? (
+        <ResultsComparison lexical={lexical} vector={vector} />
       ) : (
-        <>
-          <p style={{ marginBottom: "1.5rem" }}>
-            API:{" "}
-            <span style={{ color: health.status === "healthy" ? "#4ade80" : "#f87171" }}>
-              {health.status}
-            </span>
-          </p>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <tbody>
-              {Object.entries(health.backends).map(([name, ok]) => (
-                <tr key={name} style={{ borderBottom: "1px solid #222" }}>
-                  <td style={{ padding: "0.75rem 0", textTransform: "capitalize" }}>{name}</td>
-                  <td style={{ padding: "0.75rem 0", textAlign: "right" }}>
-                    <StatusBadge ok={ok} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
+        <p style={{ color: "#888" }}>Enter a query to compare backends.</p>
       )}
     </main>
   );
