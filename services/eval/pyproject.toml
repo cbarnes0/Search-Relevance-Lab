@@ -3,7 +3,10 @@ name = "eval"
 version = "0.1.0"
 description = "Search Relevance Lab — evaluation harness (metrics, runner, persistence)"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "httpx>=0.28.1",
+    "psycopg[binary]>=3.3.4",
+]
 
 [dependency-groups]
 dev = [
