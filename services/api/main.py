@@ -128,6 +128,12 @@ async def search(
     )
 
 
+# --- Config: lets the eval runner record what the API was actually using ----
+@app.get("/config")
+async def config() -> dict:
+    return {"embedding_model": EMBEDDING_MODEL, "collection": COLLECTION}
+
+
 # --- Health (unchanged) -----------------------------------------------------
 async def check_postgres() -> bool:
     try:
