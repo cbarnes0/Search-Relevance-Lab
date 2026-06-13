@@ -58,9 +58,12 @@ _RUN = {
     qid: {doc: float(len(ranking) - i) for i, doc in enumerate(ranking)}
     for qid, (ranking, _) in CASES.items()
 }
-_MEASURES = {f"P_{k}" for k in KS} | {f"recall_{k}" for k in KS} | {
-    f"ndcg_cut_{k}" for k in KS
-} | {"recip_rank"}
+_MEASURES = (
+    {f"P_{k}" for k in KS}
+    | {f"recall_{k}" for k in KS}
+    | {f"ndcg_cut_{k}" for k in KS}
+    | {"recip_rank"}
+)
 
 REFERENCE = pytrec_eval.RelevanceEvaluator(_QREL, _MEASURES).evaluate(_RUN)
 
