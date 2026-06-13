@@ -11,6 +11,9 @@
 # CLAUDE.md is session context, not source of truth
 CLAUDE.md
 
+# Phase context notes — AI/session context, not source of truth
+PHASE2.md
+
 # Python
 __pycache__/
 *.py[cod]

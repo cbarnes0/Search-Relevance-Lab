@@ -1,4 +1,4 @@
-.PHONY: up down build restart logs ps health ingest index-lexical index-vector index smoke lint-api
+.PHONY: up down build restart logs ps health ingest index-lexical index-vector index smoke lint-api eval-test eval-lint
 
 up:
 	docker compose up -d
@@ -40,3 +40,10 @@ smoke:
 
 lint-api:
 	docker compose exec api ruff check .
+
+# --- Phase 3: eval harness (runs locally via uv, not in compose) ---
+eval-test:
+	cd services/eval && uv run pytest
+
+eval-lint:
+	cd services/eval && uv run ruff format --check . && uv run ruff check .
