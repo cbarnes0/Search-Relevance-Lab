@@ -15,10 +15,17 @@ Latency is inflated for vector, because 8 simultaneous CPU-bound embedding encod
 
 Lexical's 0.215 nDCG@10 is below the published BEIR BM25 baseline (~0.32), while vector matches its baseline — so something about our lexical setup is underperforming, to investigate at the baseline checkpoint. 
 
-
+investigated below
 
 
 vector is ~8× slower at the median, but lexical's latency is relatively more variable (p95 = 2× its median vs vector's 1.5×)
-lexical is cheap CPU work, so its latency is dominated by network/serialiation jitter - small but variable. wide relative spread
+lexical is cheap CPU work, so its latency is dominated by network/serialization jitter - small but variable. wide relative spread
 
-vector is dominated by the embedding encode, which is consistently expensive - a high floor but a proportianally tighter tail, every req pays the same big cost
+vector is dominated by the embedding encode, which is consistently expensive - a high floor but a proportionally tighter tail, every req pays the same big cost
+
+
+
+
+
+in evaluating against a baseline, typesense kept underperforming on @nDCG. the following was discovered.
+lexical underperforms BM25 baseline; tested stemming (+0.008, real but minor) and flat weights; residual gap is structural (Typesense ≠ canonical BM25, no IDF-dominant ranking).
