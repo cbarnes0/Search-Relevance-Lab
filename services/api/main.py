@@ -3,6 +3,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 from typing import Literal
+from datetime import datetime
 
 import asyncpg
 import httpx
@@ -33,7 +34,19 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(
         lambda: app.state.model.encode("warmup", normalize_embeddings=True)
     )
+    # Connection pool for eval read-endpoints: open connections once at boot,
+    # borrow per request via `async with app.state.pool.acquire() as conn`.
+    app.state.pool = await asyncpg.create_pool(
+        host=os.environ["POSTGRES_HOST"],
+        port=int(os.environ.get("POSTGRES_PORT", "5432")),
+        user=os.environ["POSTGRES_USER"],
+        password=os.environ["POSTGRES_PASSWORD"],
+        database=os.environ["POSTGRES_DB"],
+        min_size=1,
+        max_size=5,
+    )
     yield
+    await app.state.pool.close()
 
 
 app = FastAPI(title="Search Relevance Lab API", lifespan=lifespan)
@@ -55,6 +68,46 @@ class SearchResponse(BaseModel):
     latency_ms: float
     results: list[SearchResult]
 
+class RunSummary(BaseModel):
+    id: int
+    created_at: datetime         
+    backend: str
+    dataset: str
+    k: int
+    embedding_model: str | None    # NULL for lexical
+    git_sha: str
+    concurrency: int
+    n_queries: int
+    mean_precision: float
+    mean_recall: float
+    mean_mrr: float
+    mean_ndcg: float
+    latency_p50_ms: float | None
+    latency_p95_ms: float | None
+
+class QueryComparison(BaseModel):
+    query_id: str
+    query_text: str
+    a_precision: float
+    a_recall: float
+    a_mrr: float
+    a_ndcg: float
+    b_precision: float
+    b_recall: float
+    b_mrr: float
+    b_ndcg: float
+
+class RankedDoc(BaseModel):
+    rank: int
+    doc_id: str
+    title: str
+    relevance: int      # 0 = not relevant, >0 = relevant grade
+
+class QueryDrilldown(BaseModel):
+    query_id: str
+    query_text: str
+    a: list[RankedDoc]
+    b: list[RankedDoc]
 
 # --- Backends: identical output shape, different retrieval ------------------
 async def run_lexical(client: httpx.AsyncClient, q: str, k: int) -> list[SearchResult]:
@@ -194,3 +247,50 @@ async def health() -> dict:
         "status": "healthy" if all_healthy else "degraded",
         "backends": backends,
     }
+
+@app.get("/runs")
+async def list_runs() -> list[RunSummary]:
+    async with app.state.pool.acquire() as conn:
+        rows = await conn.fetch("SELECT id, created_at, backend, dataset, k, embedding_model, "
+            " git_sha, concurrency, n_queries, mean_precision, mean_recall, "
+            " mean_mrr, mean_ndcg, latency_p50_ms, latency_p95_ms "
+            " FROM eval_runs ORDER BY id DESC ")
+    return [RunSummary(**dict(r)) for r in rows]
+
+@app.get("/runs/{a}/compare/{b}")
+async def compare_runs(a: int, b: int) -> list[QueryComparison]:
+    async with app.state.pool.acquire() as conn:
+        rows = await conn.fetch("SELECT a.query_id, q.text AS query_text, "
+            " a.precision_at_k AS a_precision, a.recall_at_k AS a_recall, "
+            " a.mrr AS a_mrr, a.ndcg AS a_ndcg, " 
+            " b.precision_at_k AS b_precision, b.recall_at_k AS b_recall, "
+            " b.mrr AS b_mrr, b.ndcg AS b_ndcg "
+            " FROM eval_results a "
+            " JOIN eval_results b ON a.query_id = b.query_id "
+            " JOIN queries q ON q.query_id = a.query_id AND q.split = 'test' "
+            " WHERE a.run_id = $1 AND b.run_id = $2", a, b)
+        return [QueryComparison(**dict(r)) for r in rows]
+    
+@app.get("/runs/{a}/queries/{qid}/compare/{b}")
+async def query_drilldown(a: int, qid: str, b: int) -> QueryDrilldown:
+    async with app.state.pool.acquire() as conn:
+        query_text = await conn.fetchval(
+            "SELECT text FROM queries WHERE query_id = $1 AND split = 'test'", qid
+        )
+        a_rows = await conn.fetch(RANKED_SQL, a, qid)
+        b_rows = await conn.fetch(RANKED_SQL, b, qid)
+    return QueryDrilldown(
+        query_id =qid,
+        query_text=query_text,
+        a=[RankedDoc(**dict(r)) for r in a_rows],
+        b=[RankedDoc(**dict(r)) for r in b_rows],
+    )
+
+RANKED_SQL = ("SELECT t.rank, t.doc_id, d.title, COALESCE(qr.relevance, 0) AS relevance "
+    " FROM eval_results er "
+    " CROSS JOIN LATERAL unnest(er.ranked_ids) WITH ORDINALITY AS t(doc_id, rank) "
+    " JOIN documents d ON d.doc_id = t.doc_id "
+    " LEFT JOIN qrels qr "
+    " ON qr.query_id = er.query_id AND qr.doc_id = t.doc_id AND qr.split = 'test' "
+    " WHERE er.run_id = $1 AND er.query_id = $2 "
+    " ORDER BY t.rank ")
