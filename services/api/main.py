@@ -116,7 +116,7 @@ async def run_lexical(client: httpx.AsyncClient, q: str, k: int) -> list[SearchR
         params={
             "q": q,
             "query_by": "title,text",
-            "query_by_weights": "2,1",  # title weighted above text
+            "query_by_weights": "1,1",
             "per_page": k,
         },
         headers={"X-TYPESENSE-API-KEY": TYPESENSE_API_KEY},

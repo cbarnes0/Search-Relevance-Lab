@@ -31,8 +31,11 @@ BATCH_SIZE = 1000
 SCHEMA = {
     "name": COLLECTION,
     "fields": [
-        {"name": "title", "type": "string"},
-        {"name": "text", "type": "string"},
+        # stem=True applies Snowball stemming at index + query time, so
+        # morphological variants (obese/obesity) fold to one root — closing
+        # part of the gap to Anserini's BM25, which stems by default.
+        {"name": "title", "type": "string", "stem": True},
+        {"name": "text", "type": "string", "stem": True},
         # Returnable in results but not searchable — no value matching query text
         # against a URL. No default_sorting_field: rank by text match score.
         {"name": "url", "type": "string", "index": False, "optional": True},
