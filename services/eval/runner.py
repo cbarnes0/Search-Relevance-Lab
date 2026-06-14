@@ -2,7 +2,7 @@ import asyncio
 import os
 import subprocess
 from pathlib import Path
-from statistics import mean
+from statistics import mean, median, quantiles
 
 import httpx
 import psycopg
@@ -143,13 +143,15 @@ def save_run(conn: psycopg.Connection, meta: dict, records: list[dict]) -> int:
     mean_recall = mean(r["recall_at_k"] for r in records)
     mean_mrr = mean(r["mrr"] for r in records)
     n_queries = len(records)
+    p50 = median(r["latency_ms"] for r in records)
+    p95 = quantiles((r["latency_ms"] for r in records), n=100)[94]
 
     with conn.transaction():
         run_id = conn.execute(
             "INSERT INTO eval_runs (backend, dataset, k, embedding_model, "
             "git_sha, concurrency, n_queries, mean_precision, mean_recall, "
-            "mean_mrr, mean_ndcg) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            "mean_mrr, mean_ndcg, latency_p50_ms, latency_p95_ms) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (
                 meta["backend"],
                 meta["dataset"],
@@ -162,6 +164,8 @@ def save_run(conn: psycopg.Connection, meta: dict, records: list[dict]) -> int:
                 mean_recall,
                 mean_mrr,
                 mean_ndcg,
+                p50,
+                p95
             ),
         ).fetchone()[0]
 
