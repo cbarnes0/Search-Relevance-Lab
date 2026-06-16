@@ -2,14 +2,16 @@ import asyncio
 import os
 import time
 from contextlib import asynccontextmanager
-from typing import Literal
 from datetime import datetime
+from typing import Literal
 
 import asyncpg
 import httpx
 from fastapi import FastAPI, Query
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
+
+from fusion import reciprocal_rank_fusion, weighted_fusion
 
 TYPESENSE_HOST = os.environ.get("TYPESENSE_HOST", "typesense")
 TYPESENSE_PORT = os.environ.get("TYPESENSE_PORT", "8108")
@@ -68,13 +70,14 @@ class SearchResponse(BaseModel):
     latency_ms: float
     results: list[SearchResult]
 
+
 class RunSummary(BaseModel):
     id: int
-    created_at: datetime         
+    created_at: datetime
     backend: str
     dataset: str
     k: int
-    embedding_model: str | None    # NULL for lexical
+    embedding_model: str | None  # NULL for lexical
     git_sha: str
     concurrency: int
     n_queries: int
@@ -84,6 +87,7 @@ class RunSummary(BaseModel):
     mean_ndcg: float
     latency_p50_ms: float | None
     latency_p95_ms: float | None
+
 
 class QueryComparison(BaseModel):
     query_id: str
@@ -97,17 +101,20 @@ class QueryComparison(BaseModel):
     b_mrr: float
     b_ndcg: float
 
+
 class RankedDoc(BaseModel):
     rank: int
     doc_id: str
     title: str
-    relevance: int      # 0 = not relevant, >0 = relevant grade
+    relevance: int  # 0 = not relevant, >0 = relevant grade
+
 
 class QueryDrilldown(BaseModel):
     query_id: str
     query_text: str
     a: list[RankedDoc]
     b: list[RankedDoc]
+
 
 # --- Backends: identical output shape, different retrieval ------------------
 async def run_lexical(client: httpx.AsyncClient, q: str, k: int) -> list[SearchResult]:
@@ -136,7 +143,9 @@ async def run_lexical(client: httpx.AsyncClient, q: str, k: int) -> list[SearchR
     ]
 
 
-async def run_vector(app: FastAPI, client: httpx.AsyncClient, q: str, k: int) -> list[SearchResult]:
+async def run_vector(
+    app: FastAPI, client: httpx.AsyncClient, q: str, k: int
+) -> list[SearchResult]:
     # encode() is blocking CPU work — offload so the event loop stays responsive.
     vector = await asyncio.to_thread(
         lambda: app.state.model.encode(
@@ -162,18 +171,79 @@ async def run_vector(app: FastAPI, client: httpx.AsyncClient, q: str, k: int) ->
     ]
 
 
+CANDIDATE_POOL = 100
+
+
+async def run_hybrid(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    q: str,
+    k: int,
+    fusion_method: Literal["rrf", "weighted"],
+    rrf_k: int,
+    alpha: float,
+) -> list[SearchResult]:
+    # 1. Retrieve both result sets concurrently
+    lexical, vector = await asyncio.gather(
+        run_lexical(client, q, CANDIDATE_POOL),
+        run_vector(app, client, q, CANDIDATE_POOL),
+    )
+
+    # 2. Fuse -> list[tuple[doc_id, fused_score]]
+    if fusion_method == "rrf":
+        fused = reciprocal_rank_fusion(
+            [[r.doc_id for r in lexical], [r.doc_id for r in vector]],
+            k=rrf_k,
+        )
+    else:
+        lexical_scores = {r.doc_id: r.score for r in lexical}
+        vector_scores = {r.doc_id: r.score for r in vector}
+        fused = weighted_fusion(
+            lexical_scores,  # {doc_id: raw score} for lexical
+            vector_scores,  # {doc_id: raw score} for vector
+            alpha=alpha,
+        )
+
+    # 3. doc_id -> SearchResult lookup, merged from both pools.
+    #    (a doc in both is identical; merge so docs unique to one survive)
+    lookup: dict[str, SearchResult] = {r.doc_id: r for r in lexical}
+    for r in vector:
+        if r.doc_id not in lookup:
+            lookup[r.doc_id] = r
+
+    # 4. Rebuild the contract shape: top-k, fused score, fresh rank.
+    results = []
+    for rank, (doc_id, score) in enumerate(fused[:k], start=1):
+        original = lookup[doc_id]
+        results.append(
+            SearchResult(
+                doc_id=doc_id,
+                title=original.title,  # from original
+                snippet=original.snippet,  # from original
+                score=score,  # FUSED score, not backend score
+                rank=rank,
+            )
+        )
+    return results
+
+
 @app.get("/search")
 async def search(
     q: str,
-    backend: Literal["lexical", "vector"] = "lexical",
+    backend: Literal["lexical", "vector", "hybrid"] = "lexical",
     k: int = Query(10, ge=1, le=100),
+    fusion_method: Literal["rrf", "weighted"] = "rrf",
+    rrf_k: int = Query(60, ge=0),
+    alpha: float = Query(0.5, ge=0.0, le=1.0),
 ) -> SearchResponse:
     start = time.perf_counter()
     async with httpx.AsyncClient() as client:
         if backend == "lexical":
             results = await run_lexical(client, q, k)
-        else:
+        elif backend == "vector":
             results = await run_vector(app, client, q, k)
+        else:
+            results = await run_hybrid(app, client, q, k, fusion_method, rrf_k, alpha)
     latency_ms = round((time.perf_counter() - start) * 1000, 1)
 
     return SearchResponse(
@@ -248,29 +318,38 @@ async def health() -> dict:
         "backends": backends,
     }
 
+
 @app.get("/runs")
 async def list_runs() -> list[RunSummary]:
     async with app.state.pool.acquire() as conn:
-        rows = await conn.fetch("SELECT id, created_at, backend, dataset, k, embedding_model, "
+        rows = await conn.fetch(
+            "SELECT id, created_at, backend, dataset, k, embedding_model, "
             " git_sha, concurrency, n_queries, mean_precision, mean_recall, "
             " mean_mrr, mean_ndcg, latency_p50_ms, latency_p95_ms "
-            " FROM eval_runs ORDER BY id DESC ")
+            " FROM eval_runs ORDER BY id DESC "
+        )
     return [RunSummary(**dict(r)) for r in rows]
+
 
 @app.get("/runs/{a}/compare/{b}")
 async def compare_runs(a: int, b: int) -> list[QueryComparison]:
     async with app.state.pool.acquire() as conn:
-        rows = await conn.fetch("SELECT a.query_id, q.text AS query_text, "
+        rows = await conn.fetch(
+            "SELECT a.query_id, q.text AS query_text, "
             " a.precision_at_k AS a_precision, a.recall_at_k AS a_recall, "
-            " a.mrr AS a_mrr, a.ndcg AS a_ndcg, " 
+            " a.mrr AS a_mrr, a.ndcg AS a_ndcg, "
             " b.precision_at_k AS b_precision, b.recall_at_k AS b_recall, "
             " b.mrr AS b_mrr, b.ndcg AS b_ndcg "
             " FROM eval_results a "
             " JOIN eval_results b ON a.query_id = b.query_id "
             " JOIN queries q ON q.query_id = a.query_id AND q.split = 'test' "
-            " WHERE a.run_id = $1 AND b.run_id = $2", a, b)
+            " WHERE a.run_id = $1 AND b.run_id = $2",
+            a,
+            b,
+        )
         return [QueryComparison(**dict(r)) for r in rows]
-    
+
+
 @app.get("/runs/{a}/queries/{qid}/compare/{b}")
 async def query_drilldown(a: int, qid: str, b: int) -> QueryDrilldown:
     async with app.state.pool.acquire() as conn:
@@ -280,17 +359,20 @@ async def query_drilldown(a: int, qid: str, b: int) -> QueryDrilldown:
         a_rows = await conn.fetch(RANKED_SQL, a, qid)
         b_rows = await conn.fetch(RANKED_SQL, b, qid)
     return QueryDrilldown(
-        query_id =qid,
+        query_id=qid,
         query_text=query_text,
         a=[RankedDoc(**dict(r)) for r in a_rows],
         b=[RankedDoc(**dict(r)) for r in b_rows],
     )
 
-RANKED_SQL = ("SELECT t.rank, t.doc_id, d.title, COALESCE(qr.relevance, 0) AS relevance "
+
+RANKED_SQL = (
+    "SELECT t.rank, t.doc_id, d.title, COALESCE(qr.relevance, 0) AS relevance "
     " FROM eval_results er "
     " CROSS JOIN LATERAL unnest(er.ranked_ids) WITH ORDINALITY AS t(doc_id, rank) "
     " JOIN documents d ON d.doc_id = t.doc_id "
     " LEFT JOIN qrels qr "
     " ON qr.query_id = er.query_id AND qr.doc_id = t.doc_id AND qr.split = 'test' "
     " WHERE er.run_id = $1 AND er.query_id = $2 "
-    " ORDER BY t.rank ")
+    " ORDER BY t.rank "
+)
