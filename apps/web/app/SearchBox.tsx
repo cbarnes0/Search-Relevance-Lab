@@ -27,30 +27,9 @@ export default function SearchBox({ initialQuery }: { initialQuery: string }) {
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder="Search the corpus…"
-        style={{
-          flex: 1,
-          padding: "0.6rem 0.8rem",
-          fontSize: "1rem",
-          background: "#111",
-          color: "#eee",
-          border: "1px solid #333",
-          borderRadius: "6px",
-        }}
+        style={{ flex: 1 }}
       />
-      <button
-        type="submit"
-        style={{
-          padding: "0.6rem 1.2rem",
-          fontSize: "1rem",
-          background: "#2563eb",
-          color: "#fff",
-          border: "none",
-          borderRadius: "6px",
-          cursor: "pointer",
-        }}
-      >
-        Search
-      </button>
+      <button type="submit">Search</button>
     </form>
   );
 }

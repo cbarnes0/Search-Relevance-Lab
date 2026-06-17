@@ -43,18 +43,16 @@ export default async function Page({
   }
 
   return (
-    <main style={{ padding: "2rem", maxWidth: "1100px", margin: "2rem auto" }}>
-      <h1 style={{ marginBottom: "0.25rem" }}>Search Relevance Lab</h1>
-      <p style={{ color: "#888", marginBottom: "2rem" }}>
-        Lexical vs. vector retrieval — NFCorpus
-      </p>
+    <main className="container">
+      <h1 className="page-title">Search Relevance Lab</h1>
+      <p className="subtitle">Lexical vs. vector retrieval — NFCorpus</p>
 
       <SearchBox initialQuery={query} />
 
       {query ? (
         <ResultsComparison lexical={lexical} vector={vector} />
       ) : (
-        <p style={{ color: "#888" }}>Enter a query to compare backends.</p>
+        <p className="muted">Enter a query to compare backends.</p>
       )}
     </main>
   );

@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import Breadcrumbs from "../../Breadcrumbs";
+import MetricsGlossary from "../../MetricsGlossary";
 import type { QueryComparison, RunSummary } from "../../types";
 
 const API_URL = process.env.API_URL ?? "http://localhost:8000";
@@ -28,14 +30,6 @@ function delta(row: QueryComparison, m: SortMetric): number {
   return row[`b_${m}`] - row[`a_${m}`];
 }
 
-const cell: React.CSSProperties = {
-  padding: "0.4rem 0.75rem",
-  borderBottom: "1px solid #222",
-  textAlign: "right",
-  whiteSpace: "nowrap",
-};
-const leftCell: React.CSSProperties = { ...cell, textAlign: "left" };
-
 export default async function ComparePage({
   searchParams,
 }: {
@@ -51,9 +45,10 @@ export default async function ComparePage({
 
   if (!a || !b) {
     return (
-      <main style={{ padding: "2rem", maxWidth: "1100px", margin: "2rem auto" }}>
-        <p style={{ color: "#f87171" }}>
-          Missing run ids. Pick two runs from the <Link href="/runs">runs page</Link>.
+      <main className="container">
+        <p className="error">
+          Missing run ids. Pick two runs from the{" "}
+          <Link href="/runs">runs page</Link>.
         </p>
       </main>
     );
@@ -68,46 +63,59 @@ export default async function ComparePage({
   const sorted = [...rows].sort((x, y) => delta(y, sort) - delta(x, sort));
 
   return (
-    <main style={{ padding: "2rem", maxWidth: "1100px", margin: "2rem auto" }}>
-      <h1 style={{ marginBottom: "0.5rem" }}>
+    <main className="container">
+      <Breadcrumbs
+        items={[
+          { label: "Home", href: "/" },
+          { label: "Runs", href: "/runs" },
+          { label: `Compare ${a} vs ${b}` },
+        ]}
+      />
+      <h1 className="page-title">
         Run {a} vs Run {b}
       </h1>
-      <p style={{ color: "#888", marginBottom: "1.5rem" }}>
-        Sorted by {sort} delta (B − A), largest first.{" "}
-        <Link href="/runs">← all runs</Link>
+      <p className="intro">
+        The two runs scored on the <strong>same queries</strong>. The cards show
+        each run&apos;s average across all queries; the table below is one row per
+        query. Each <strong>Δ (delta)</strong> column is run B&apos;s score minus
+        run A&apos;s — <span className="delta-pos">green</span> means B did better
+        on that query, <span className="delta-neg">red</span> means A did. Click a
+        column header to re-sort; click a query to see both ranked lists.
       </p>
 
+      <MetricsGlossary />
+
       {/* Aggregate header: the two runs' means side by side. */}
-      <section style={{ display: "flex", gap: "3rem", marginBottom: "2rem" }}>
+      <div className="card-grid">
         {[runA, runB].map((run, i) =>
           run === null ? (
-            <div key={i} style={{ color: "#f87171" }}>Run not found</div>
+            <div key={i} className="card error">
+              Run not found
+            </div>
           ) : (
-            <div key={run.id}>
-              <h2 style={{ fontSize: "1rem", margin: "0 0 0.25rem" }}>
+            <div key={run.id} className="card">
+              <h3>
                 {i === 0 ? "A" : "B"}: run {run.id} · {run.backend}
-              </h2>
-              <div style={{ color: "#aaa", fontSize: "0.9rem" }}>
+              </h3>
+              <div className="card__meta">
                 nDCG {run.mean_ndcg.toFixed(4)} · P {run.mean_precision.toFixed(4)} ·
                 recall {run.mean_recall.toFixed(4)} · MRR {run.mean_mrr.toFixed(4)}
               </div>
             </div>
           ),
         )}
-      </section>
+      </div>
 
-      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.9rem" }}>
+      <table>
         <thead>
-          <tr style={{ color: "#888" }}>
-            <th style={leftCell}>query</th>
-            {/* One sortable header per metric. Mapping SORT_METRICS keeps the
-                columns and their sort links in lockstep; the active sort is
-                brightened so you can see what you're sorted by. */}
+          <tr>
+            <th>query</th>
+            {/* One sortable header per metric; the active sort is brightened. */}
             {SORT_METRICS.map((m) => (
-              <th key={m} style={cell}>
+              <th key={m} className="num">
                 <Link
                   href={`/runs/compare?a=${a}&b=${b}&sort=${m}`}
-                  style={{ color: m === sort ? "#fff" : "#888", textDecoration: "none" }}
+                  style={{ color: m === sort ? "#fff" : "var(--text-muted)" }}
                 >
                   Δ{m}
                 </Link>
@@ -118,17 +126,17 @@ export default async function ComparePage({
         <tbody>
           {sorted.map((row) => (
             <tr key={row.query_id}>
-              <td style={leftCell}>
+              <td>
                 <Link href={`/runs/compare/${row.query_id}?a=${a}&b=${b}`}>
                   {row.query_text}
                 </Link>
               </td>
-              {/* A delta cell per metric: green if B won (positive), red if A won. */}
+              {/* A delta cell per metric: green if B won, red if A won. */}
               {SORT_METRICS.map((m) => {
                 const d = delta(row, m);
-                const color = d > 0 ? "#4ade80" : d < 0 ? "#f87171" : "#666";
+                const cls = d > 0 ? "delta-pos" : d < 0 ? "delta-neg" : "delta-zero";
                 return (
-                  <td key={m} style={{ ...cell, color }}>
+                  <td key={m} className={`num ${cls}`}>
                     {d > 0 ? "+" : ""}
                     {d.toFixed(3)}
                   </td>

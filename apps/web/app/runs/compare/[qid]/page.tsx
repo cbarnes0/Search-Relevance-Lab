@@ -1,5 +1,4 @@
-import Link from "next/link";
-
+import Breadcrumbs from "../../../Breadcrumbs";
 import type { QueryDrilldown, RankedDoc, RunSummary } from "../../../types";
 
 const API_URL = process.env.API_URL ?? "http://localhost:8000";
@@ -24,35 +23,28 @@ async function getRuns(): Promise<RunSummary[]> {
 
 function RankedList({ heading, docs }: { heading: string; docs: RankedDoc[] }) {
   return (
-    <section style={{ flex: 1, minWidth: 0 }}>
-      <h2 style={{ fontSize: "1.1rem" }}>{heading}</h2>
+    <section className="column">
+      <h2 style={{ marginBottom: "0.75rem" }}>{heading}</h2>
       {docs.length === 0 ? (
-        <p style={{ color: "#888" }}>No results</p>
+        <p className="muted">No results</p>
       ) : (
-      <ol style={{ margin: 0, padding: 0 }}>
-        {docs.map((doc) => {
-          const relevant = doc.relevance > 0;
-          return (
-            <li
-              key={`${doc.doc_id}-${doc.rank}`}
-              style={{
-                listStyle: "none",
-                padding: "0.5rem 0.75rem",
-                borderBottom: "1px solid #222",
-                // the highlight: relevant docs get a visible treatment
-                borderLeft: relevant ? "3px solid #4ade80" : "3px solid transparent",
-                background: relevant ? "#14271b" : "transparent",
-              }}
-            >
-              <div style={{ fontSize: "0.8rem", color: "#666" }}>
-                #{doc.rank} · {doc.doc_id}
-                {relevant ? `  ✓ rel ${doc.relevance}` : ""}
-              </div>
-              <div>{doc.title}</div>
-            </li>
-          );
-        })}
-      </ol>
+        <ol className="result-list">
+          {docs.map((doc) => {
+            const relevant = doc.relevance > 0;
+            return (
+              <li
+                key={`${doc.doc_id}-${doc.rank}`}
+                className={`result-item${relevant ? " result-item--relevant" : ""}`}
+              >
+                <div className="result-item__meta">
+                  #{doc.rank} · {doc.doc_id}
+                  {relevant ? `  ✓ rel ${doc.relevance}` : ""}
+                </div>
+                <div>{doc.title}</div>
+              </li>
+            );
+          })}
+        </ol>
       )}
     </section>
   );
@@ -72,8 +64,8 @@ export default async function DrilldownPage({
 
   if (!a || !b) {
     return (
-      <main style={{ padding: "2rem", maxWidth: "1100px", margin: "2rem auto" }}>
-        <p style={{ color: "#f87171" }}>Missing run ids in the URL.</p>
+      <main className="container">
+        <p className="error">Missing run ids in the URL.</p>
       </main>
     );
   }
@@ -81,8 +73,8 @@ export default async function DrilldownPage({
   const [data, runs] = await Promise.all([getDrilldown(a, b, qid), getRuns()]);
   if (data === null) {
     return (
-      <main style={{ padding: "2rem", maxWidth: "1100px", margin: "2rem auto" }}>
-        <p style={{ color: "#f87171" }}>Query not found in one of the runs.</p>
+      <main className="container">
+        <p className="error">Query not found in one of the runs.</p>
       </main>
     );
   }
@@ -91,17 +83,28 @@ export default async function DrilldownPage({
   const backendB = runs.find((r) => r.id === b)?.backend ?? "?";
 
   return (
-    <main style={{ padding: "2rem", maxWidth: "1100px", margin: "2rem auto" }}>
-      <p style={{ marginBottom: "0.25rem" }}>
-        <Link href={`/runs/compare?a=${a}&b=${b}`}>← back to comparison</Link>
+    <main className="container">
+      <Breadcrumbs
+        items={[
+          { label: "Home", href: "/" },
+          { label: "Runs", href: "/runs" },
+          { label: `Compare ${a} vs ${b}`, href: `/runs/compare?a=${a}&b=${b}` },
+          { label: data.query_id },
+        ]}
+      />
+      <h1 className="page-title">{data.query_text}</h1>
+      <p className="subtitle">
+        {data.query_id} · run {a} ({backendA}, A) vs run {b} ({backendB}, B)
       </p>
-      <h1 style={{ marginBottom: "0.25rem" }}>{data.query_text}</h1>
-      <p style={{ color: "#888", marginBottom: "2rem" }}>
-        {data.query_id} · run {a} ({backendA}, A) vs run {b} ({backendB}, B) ·
-        relevant docs highlighted
+      <p className="intro">
+        The actual ranked results each run returned for this one query, in order.
+        Documents the benchmark judged <strong>relevant</strong> are{" "}
+        <span style={{ color: "var(--success)" }}>highlighted green</span> (with
+        their relevance grade). Comparing the two columns shows <em>why</em> one
+        run scored higher — which relevant docs it surfaced, and how near the top.
       </p>
 
-      <div style={{ display: "flex", gap: "2.5rem", alignItems: "flex-start" }}>
+      <div className="columns">
         <RankedList heading={`A — run ${a} (${backendA})`} docs={data.a} />
         <RankedList heading={`B — run ${b} (${backendB})`} docs={data.b} />
       </div>

@@ -1,6 +1,7 @@
 import Link from "next/link";
 
-import type { FusionCategory, FusionQueryRow, RunSummary } from "../../types";
+import Breadcrumbs from "../../Breadcrumbs";
+import type { FusionQueryRow, RunSummary } from "../../types";
 
 const API_URL = process.env.API_URL ?? "http://localhost:8000";
 
@@ -28,21 +29,39 @@ async function getFusion(
   return res.json();
 }
 
-const cell: React.CSSProperties = {
-  padding: "0.4rem 0.75rem",
-  borderBottom: "1px solid #222",
-  textAlign: "right",
-  whiteSpace: "nowrap",
-};
-const leftCell: React.CSSProperties = { ...cell, textAlign: "left" };
+function fusionLabel(run: RunSummary | null): string {
+  if (!run) return "—";
+  if (run.fusion_method === "rrf") return `rrf k=${run.rrf_k}`;
+  if (run.fusion_method === "weighted") return `weighted α=${run.alpha}`;
+  return run.backend;
+}
 
-// Category -> colour, for the category cell.
-const categoryColor: Record<FusionCategory, string> = {
-  beat_both: "#4ade80", // green
-  lost_both: "#f87171", // red
-  between: "#aaa",
-  tied: "#666",
-};
+function MetricCard({
+  label,
+  run,
+  missingId,
+}: {
+  label: string;
+  run: RunSummary | null;
+  missingId: number;
+}) {
+  if (!run) {
+    return (
+      <div className="card error">
+        {label}: run {missingId} not found
+      </div>
+    );
+  }
+  return (
+    <div className="card">
+      <h3>{label}</h3>
+      <div className="card__value">{run.mean_ndcg.toFixed(4)}</div>
+      <div className="card__meta">
+        {run.backend} · {fusionLabel(run)}
+      </div>
+    </div>
+  );
+}
 
 export default async function FusionPage({
   searchParams,
@@ -58,18 +77,23 @@ export default async function FusionPage({
   const hybrid = Number(params.hybrid);
   const lexical = Number(params.lexical);
   const vector = Number(params.vector);
-  // Validate filter against the allowed set; fall back to "all".
   const filter: Filter = FILTERS.includes(params.filter as Filter)
     ? (params.filter as Filter)
     : "all";
 
+  const crumbs = [
+    { label: "Home", href: "/" },
+    { label: "Runs", href: "/runs" },
+    { label: "Fusion" },
+  ];
+
   if (!hybrid || !lexical || !vector) {
     return (
-      <main style={{ padding: "2rem", maxWidth: "1100px", margin: "2rem auto" }}>
-        <p style={{ color: "#f87171" }}>
+      <main className="container">
+        <Breadcrumbs items={crumbs} />
+        <p className="error">
           Need hybrid, lexical, and vector run ids, e.g.{" "}
-          <code>?hybrid=19&lexical=15&vector=16</code>.{" "}
-          <Link href="/runs">← all runs</Link>
+          <code>?hybrid=19&lexical=15&vector=16</code>.
         </p>
       </main>
     );
@@ -80,118 +104,102 @@ export default async function FusionPage({
     getFusion(hybrid, lexical, vector),
   ]);
 
-  // Look up the three run summaries for the header (labels + fusion params).
   const hybridRun = runs.find((r) => r.id === hybrid) ?? null;
   const lexicalRun = runs.find((r) => r.id === lexical) ?? null;
   const vectorRun = runs.find((r) => r.id === vector) ?? null;
 
-  // order by hybrid's advantage over the better single, descending:
-  //   hybrid_ndcg - max(lexical_ndcg, vector_ndcg)
-  // so beat_both floats to the top and lost_both sinks.
-  const sorted = [...rows].sort((a, b) => {
-    const advantageA = a.hybrid_ndcg - Math.max(a.lexical_ndcg, a.vector_ndcg);
-    const advantageB = b.hybrid_ndcg - Math.max(b.lexical_ndcg, b.vector_ndcg);
-    return advantageB - advantageA; // Descending order
-  });
+  // Sort by hybrid's advantage over the better single, descending — beat_both
+  // floats to the top, lost_both sinks. Copy before sorting (don't mutate).
+  const sorted = [...rows].sort(
+    (a, b) =>
+      b.hybrid_ndcg -
+      Math.max(b.lexical_ndcg, b.vector_ndcg) -
+      (a.hybrid_ndcg - Math.max(a.lexical_ndcg, a.vector_ndcg)),
+  );
 
-  // `category` matches. Server-side: just .filter() over `sorted`.
-  const visible = filter === "all" 
-    ? sorted 
-    : sorted.filter((row) => row.category === filter);
+  const visible =
+    filter === "all" ? sorted : sorted.filter((row) => row.category === filter);
 
   return (
-    <main style={{ padding: "2rem", maxWidth: "1100px", margin: "2rem auto" }}>
-      <h1 style={{ marginBottom: "0.5rem" }}>Fusion comparison</h1>
-      <p style={{ color: "#888", marginBottom: "1.5rem" }}>
-        hybrid {hybrid} vs vector {vector} vs lexical {lexical}.{" "}
-        <Link href="/runs">← all runs</Link>
+    <main className="container">
+      <Breadcrumbs items={crumbs} />
+      <h1 className="page-title">Fusion comparison</h1>
+      <p className="intro">
+        The core Phase&nbsp;4 question: does <strong>hybrid</strong> retrieval
+        (combining lexical + vector) beat either backend alone? The cards show each
+        approach&apos;s average nDCG; the table is one row per query, with all
+        three scores and a <strong>category</strong> summarising how hybrid did.
+        Sorted so hybrid&apos;s biggest wins are at the top. Use the filters to
+        isolate where fusion helped vs. hurt.
       </p>
 
-      <section style={{ display: "flex", gap: "1.5rem", marginBottom: "2rem" }}>
-        <div style={{ flex: 1, padding: "1rem", border: "1px solid #333", borderRadius: "6px" }}>
-          <h3 style={{ margin: "0 0 0.5rem 0", fontSize: "1rem", color: "#888" }}>Lexical</h3>
-          {lexicalRun ? (
-            <div>
-              <div style={{ fontSize: "1.25rem", fontWeight: "bold" }}>{lexicalRun.mean_ndcg.toFixed(4)}</div>
-              <div style={{ fontSize: "0.85rem", color: "#aaa", marginTop: "0.25rem" }}>Backend: {lexicalRun.backend}</div>
-            </div>
-          ) : (
-            <p style={{ color: "#f87171", margin: 0 }}>Run {lexical} not found</p>
-          )}
+      <details className="note">
+        <summary>What do the categories mean?</summary>
+        <div className="note__body">
+          <dl>
+            <dt>
+              <span className="badge badge--beat_both">beat_both</span>
+            </dt>
+            <dd>Hybrid scored higher than both lexical and vector — fusion helped.</dd>
+            <dt>
+              <span className="badge badge--lost_both">lost_both</span>
+            </dt>
+            <dd>Hybrid scored lower than both — fusion hurt.</dd>
+            <dt>
+              <span className="badge badge--between">between</span>
+            </dt>
+            <dd>Hybrid landed between the two single backends.</dd>
+            <dt>
+              <span className="badge badge--tied">tied</span>
+            </dt>
+            <dd>Hybrid matched both (often a query where neither found anything).</dd>
+          </dl>
         </div>
+      </details>
 
-        <div style={{ flex: 1, padding: "1rem", border: "1px solid #333", borderRadius: "6px" }}>
-          <h3 style={{ margin: "0 0 0.5rem 0", fontSize: "1rem", color: "#888" }}>Vector</h3>
-          {vectorRun ? (
-            <div>
-              <div style={{ fontSize: "1.25rem", fontWeight: "bold" }}>{vectorRun.mean_ndcg.toFixed(4)}</div>
-              <div style={{ fontSize: "0.85rem", color: "#aaa", marginTop: "0.25rem" }}>Backend: {vectorRun.backend}</div>
-            </div>
-          ) : (
-            <p style={{ color: "#f87171", margin: 0 }}>Run {vector} not found</p>
-          )}
-        </div>
+      <div className="card-grid">
+        <MetricCard label="Lexical" run={lexicalRun} missingId={lexical} />
+        <MetricCard label="Vector" run={vectorRun} missingId={vector} />
+        <MetricCard label="Hybrid" run={hybridRun} missingId={hybrid} />
+      </div>
 
-        <div style={{ flex: 1, padding: "1rem", border: "1px solid #333", borderRadius: "6px" }}>
-          <h3 style={{ margin: "0 0 0.5rem 0", fontSize: "1rem", color: "#888" }}>Hybrid</h3>
-          {hybridRun ? (
-            <div>
-              <div style={{ fontSize: "1.25rem", fontWeight: "bold" }}>{hybridRun.mean_ndcg.toFixed(4)}</div>
-              <div style={{ fontSize: "0.85rem", color: "#aaa", marginTop: "0.25rem" }}>Backend: {hybridRun.backend}</div>
-              <div style={{ fontSize: "0.8rem", color: "#666", marginTop: "0.25rem" }}>
-                Method: {hybridRun.fusion_method} (k: {hybridRun.rrf_k ?? "N/A"}, α: {hybridRun.alpha ?? "N/A"})
-              </div>
-            </div>
-          ) : (
-            <p style={{ color: "#f87171", margin: 0 }}>Run {hybrid} not found</p>
-          )}
-        </div>
-      </section>
-
-      {/* FILTER LINKS — each is a <Link> that sets ?filter=...; the server
-          re-renders with the new searchParams. No client component, no useState.
-          The active filter is brightened. */}
-      <nav style={{ display: "flex", gap: "1rem", marginBottom: "1rem" }}>
+      {/* FILTER PILLS — each is a <Link> that sets ?filter=...; the server
+          re-renders with the new searchParams. No client component, no useState. */}
+      <nav className="pills">
         {FILTERS.map((f) => (
           <Link
             key={f}
             href={`/runs/fusion?hybrid=${hybrid}&lexical=${lexical}&vector=${vector}&filter=${f}`}
-            style={{
-              color: f === filter ? "#fff" : "#888",
-              textDecoration: "none",
-            }}
+            className={`pill${f === filter ? " pill--active" : ""}`}
           >
             {f}
           </Link>
         ))}
       </nav>
 
-      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.9rem" }}>
+      <table>
         <thead>
-          <tr style={{ color: "#888" }}>
-            <th style={leftCell}>query</th>
-            <th style={cell}>lexical</th>
-            <th style={cell}>vector</th>
-            <th style={cell}>hybrid</th>
-            <th style={leftCell}>category</th>
+          <tr>
+            <th>query</th>
+            <th className="num">lexical</th>
+            <th className="num">vector</th>
+            <th className="num">hybrid</th>
+            <th>category</th>
           </tr>
         </thead>
         <tbody>
-         {visible.map((row) => (
+          {visible.map((row) => (
             <tr key={row.query_id}>
-              <td style={leftCell}>
-                <Link 
-                  href={`/runs/compare/${row.query_id}?a=${hybrid}&b=${vector}`} 
-                  style={{ color: "#38bdf8", textDecoration: "none" }}
-                >
-                  {row.query_text || `ID: ${row.query_id}`}
+              <td>
+                <Link href={`/runs/compare/${row.query_id}?a=${hybrid}&b=${vector}`}>
+                  {row.query_text}
                 </Link>
               </td>
-              <td style={cell}>{row.lexical_ndcg.toFixed(3)}</td>
-              <td style={cell}>{row.vector_ndcg.toFixed(3)}</td>
-              <td style={cell}>{row.hybrid_ndcg.toFixed(3)}</td>
-              <td style={{ ...leftCell, color: categoryColor[row.category], fontWeight: "600" }}>
-                {row.category}
+              <td className="num">{row.lexical_ndcg.toFixed(3)}</td>
+              <td className="num">{row.vector_ndcg.toFixed(3)}</td>
+              <td className="num">{row.hybrid_ndcg.toFixed(3)}</td>
+              <td>
+                <span className={`badge badge--${row.category}`}>{row.category}</span>
               </td>
             </tr>
           ))}
