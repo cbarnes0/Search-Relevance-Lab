@@ -125,10 +125,10 @@ export default async function FusionPage({
       <Breadcrumbs items={crumbs} />
       <h1 className="page-title">Fusion comparison</h1>
       <p className="intro">
-        The core Phase&nbsp;4 question: does <strong>hybrid</strong> retrieval
+        The core Phase&nbsp;4 question: does hybrid retrieval
         (combining lexical + vector) beat either backend alone? The cards show each
         approach&apos;s average nDCG; the table is one row per query, with all
-        three scores and a <strong>category</strong> summarising how hybrid did.
+        three scores and a category summarising how hybrid did.
         Sorted so hybrid&apos;s biggest wins are at the top. Use the filters to
         isolate where fusion helped vs. hurt.
       </p>
