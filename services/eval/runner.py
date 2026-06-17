@@ -56,11 +56,17 @@ def load_qrels() -> dict[str, dict[str, int]]:
         return qrels
 
 
-async def run_query(client, sem, query_id, text, backend, k, qrels):
+async def run_query(client, sem, query_id, text, backend, k, qrels, fusion_method=None, rrf_k=None, alpha=None):
     async with sem:
-        resp = await client.get(
-            "/search", params={"q": text, "backend": backend, "k": k}
-        )
+        params = {"q": text, "backend": backend, "k": k}
+        if backend == "hybrid":
+            params["fusion_method"] = fusion_method
+            if rrf_k is not None:
+                params["rrf_k"] = rrf_k
+            if alpha is not None:
+                params["alpha"] = alpha
+
+        resp = await client.get("/search", params=params)
 
         resp.raise_for_status()
         body = resp.json()
@@ -84,7 +90,7 @@ async def run_query(client, sem, query_id, text, backend, k, qrels):
         }
 
 
-async def run_eval(backend, k, concurrency):
+async def run_eval(backend, k, concurrency, fusion_method=None, rrf_k=None, alpha=None):
 
     queries = load_queries()
     qrels = load_qrels()
@@ -102,17 +108,20 @@ async def run_eval(backend, k, concurrency):
         meta = {
             "git_sha": git_sha,
             "embedding_model": config["embedding_model"]
-            if backend == "vector"
+            if backend in ("vector", "hybrid")
             else None,
             "backend": backend,
             "k": k,
             "concurrency": concurrency,
             "dataset": DATASET,
+            "fusion_method": fusion_method,
+            "rrf_k": rrf_k,
+            "alpha": alpha
         }
         sem = asyncio.Semaphore(concurrency)
 
         coros = [
-            run_query(client, sem, qid, text, backend, k, qrels[qid])
+            run_query(client, sem, qid, text, backend, k, qrels[qid], fusion_method=fusion_method, rrf_k=rrf_k, alpha=alpha)
             for (qid, text) in queries.items()
         ]
 
@@ -150,8 +159,8 @@ def save_run(conn: psycopg.Connection, meta: dict, records: list[dict]) -> int:
         run_id = conn.execute(
             "INSERT INTO eval_runs (backend, dataset, k, embedding_model, "
             "git_sha, concurrency, n_queries, mean_precision, mean_recall, "
-            "mean_mrr, mean_ndcg, latency_p50_ms, latency_p95_ms) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            "mean_mrr, mean_ndcg, latency_p50_ms, latency_p95_ms, fusion_method, rrf_k, alpha) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (
                 meta["backend"],
                 meta["dataset"],
@@ -165,7 +174,10 @@ def save_run(conn: psycopg.Connection, meta: dict, records: list[dict]) -> int:
                 mean_mrr,
                 mean_ndcg,
                 p50,
-                p95
+                p95,
+                meta["fusion_method"],
+                meta["rrf_k"],
+                meta["alpha"]
             ),
         ).fetchone()[0]
 
@@ -196,3 +208,10 @@ if __name__ == "__main__":
             records, meta = asyncio.run(run_eval(backend, k=10, concurrency=8))
             run_id = save_run(conn, meta, records)
             print(f"saved run {run_id}: {backend}")
+        for method, rrf_k, alpha in (("rrf", 60, None), ("weighted", None, 0.5)):
+            records, meta = asyncio.run(
+                run_eval("hybrid", k=10, concurrency=8,
+                         fusion_method=method, rrf_k=rrf_k, alpha=alpha)
+            )
+            run_id = save_run(conn, meta, records)
+            print(f"saved run {run_id}: {method}")

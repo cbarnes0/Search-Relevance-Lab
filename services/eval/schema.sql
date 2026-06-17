@@ -17,6 +17,14 @@ CREATE TABLE IF NOT EXISTS eval_runs (
     k               INT   NOT NULL,
     embedding_model TEXT,            -- NULL for lexical (not applicable)
 
+    -- fusion config: NULL for single-backend runs (lexical/vector). For
+    -- backend=hybrid, records exactly what produced the ranking so the run
+    -- is reproducible. Only the relevant knob is set per method:
+    -- rrf_k for fusion_method='rrf', alpha for 'weighted'; the other stays NULL.
+    fusion_method   TEXT,
+    rrf_k           INT,
+    alpha           DOUBLE PRECISION,
+
     -- provenance: how/when it ran
     git_sha         TEXT  NOT NULL,
     concurrency     INT   NOT NULL,
@@ -34,6 +42,14 @@ CREATE TABLE IF NOT EXISTS eval_runs (
     latency_p50_ms  DOUBLE PRECISION,
     latency_p95_ms  DOUBLE PRECISION
 );
+
+-- Additive migration for DBs created before the fusion columns existed.
+-- CREATE TABLE IF NOT EXISTS above is a no-op on an existing table, so the
+-- new columns must be added explicitly. ADD COLUMN IF NOT EXISTS keeps this
+-- idempotent on every startup, same contract as the CREATE.
+ALTER TABLE eval_runs ADD COLUMN IF NOT EXISTS fusion_method TEXT;
+ALTER TABLE eval_runs ADD COLUMN IF NOT EXISTS rrf_k         INT;
+ALTER TABLE eval_runs ADD COLUMN IF NOT EXISTS alpha         DOUBLE PRECISION;
 
 CREATE TABLE IF NOT EXISTS eval_results (
     run_id          BIGINT NOT NULL REFERENCES eval_runs(id) ON DELETE CASCADE,
