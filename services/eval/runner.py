@@ -10,8 +10,6 @@ import psycopg
 from metrics import ndcg_at_k, precision_at_k, recall_at_k, reciprocal_rank
 
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
-DATASET = "beir/nfcorpus/test"
-
 
 def apply_schema(conn: psycopg.Connection) -> None:
     """Create the eval tables if they don't exist (idempotent).
@@ -33,20 +31,20 @@ def connect() -> psycopg.Connection:
     )
 
 
-def load_queries() -> dict[str, str]:
+def load_queries(split: str) -> dict[str, str]:
 
     with connect() as conn:
         rows = conn.execute(
-            "SELECT query_id, text FROM queries WHERE split = %s", ("test",)
+            "SELECT query_id, text FROM queries WHERE split = %s", (split,)
         ).fetchall()
     return {query_id: text for query_id, text in rows}
 
 
-def load_qrels() -> dict[str, dict[str, int]]:
+def load_qrels(split: str) -> dict[str, dict[str, int]]:
 
     with connect() as conn:
         rows = conn.execute(
-            "SELECT query_id, doc_id, relevance FROM qrels WHERE split = %s", ("test",)
+            "SELECT query_id, doc_id, relevance FROM qrels WHERE split = %s", (split,)
         ).fetchall()
         qrels = {}
         for query_id, doc_id, relevance in rows:
@@ -56,7 +54,7 @@ def load_qrels() -> dict[str, dict[str, int]]:
         return qrels
 
 
-async def run_query(client, sem, query_id, text, backend, k, qrels, fusion_method=None, rrf_k=None, alpha=None):
+async def run_query(client, sem, query_id, text, backend, k, qrels, fusion_method=None, rrf_k=None, alpha=None, max_retries=3):
     async with sem:
         params = {"q": text, "backend": backend, "k": k}
         if backend == "hybrid":
@@ -66,9 +64,23 @@ async def run_query(client, sem, query_id, text, backend, k, qrels, fusion_metho
             if alpha is not None:
                 params["alpha"] = alpha
 
-        resp = await client.get("/search", params=params)
+        # Retry transient backend failures (Typesense 408 under sweep load,
+        # 5xx, timeouts) so one flaky query doesn't abort a long batch run.
+        # Persistent failures still raise -- never silently drop a query, which
+        # would change n and bias the mean metrics.
+        for attempt in range(max_retries):
+            try:
+                resp = await client.get("/search", params=params)
+                resp.raise_for_status()
+                break
+            except (httpx.HTTPStatusError, httpx.TimeoutException) as exc:
+                transient = isinstance(exc, httpx.TimeoutException) or (
+                    exc.response.status_code in (408, 429, 500, 502, 503, 504)
+                )
+                if not transient or attempt == max_retries - 1:
+                    raise
+                await asyncio.sleep(0.5 * (attempt + 1))
 
-        resp.raise_for_status()
         body = resp.json()
 
         ranked_ids = [entry["doc_id"] for entry in body["results"]]
@@ -90,10 +102,10 @@ async def run_query(client, sem, query_id, text, backend, k, qrels, fusion_metho
         }
 
 
-async def run_eval(backend, k, concurrency, fusion_method=None, rrf_k=None, alpha=None):
+async def run_eval(backend, k, concurrency, split="test", fusion_method=None, rrf_k=None, alpha=None):
 
-    queries = load_queries()
-    qrels = load_qrels()
+    queries = load_queries(split)
+    qrels = load_qrels(split)
 
     git_sha = (
         subprocess.run(
@@ -113,7 +125,7 @@ async def run_eval(backend, k, concurrency, fusion_method=None, rrf_k=None, alph
             "backend": backend,
             "k": k,
             "concurrency": concurrency,
-            "dataset": DATASET,
+            "dataset": f"beir/nfcorpus/{split}",
             "fusion_method": fusion_method,
             "rrf_k": rrf_k,
             "alpha": alpha
@@ -215,3 +227,37 @@ if __name__ == "__main__":
             )
             run_id = save_run(conn, meta, records)
             print(f"saved run {run_id}: {method}")
+        # 1. alpha sweep on DEV (weighted)
+        alpha_results = []
+        for alpha in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
+            records, _ = asyncio.run(run_eval("hybrid", k=10, concurrency=4, split="dev",
+                                              fusion_method="weighted", alpha=alpha))
+            ndcg = mean(r["ndcg"] for r in records)
+            alpha_results.append((alpha, ndcg))
+
+        best_alpha, best_alpha_ndcg = max(alpha_results, key=lambda pair: pair[1])
+        print("alpha sweep (dev):", alpha_results)
+        print(f"best alpha={best_alpha} dev nDCG={best_alpha_ndcg:.4f}")
+
+        # 2. rrf k sweep on DEV
+        rrf_k_results = []
+        for rrf_k in [1, 10, 30, 60, 100, 200]:
+            records, _ = asyncio.run(run_eval("hybrid", k=10, concurrency=4, split="dev",
+                                              fusion_method="rrf", rrf_k=rrf_k))
+            ndcg = mean(r["ndcg"] for r in records)
+            rrf_k_results.append((rrf_k, ndcg))
+
+        best_k, best_k_ndcg = max(rrf_k_results, key=lambda pair: pair[1])
+        print("rrf k sweep (dev):", rrf_k_results)
+        print(f"best k={best_k} dev nDCG={best_k_ndcg:.4f}")
+
+        # 3. report tuned params on TEST (the honest headline numbers) and save
+        records, meta = asyncio.run(run_eval("hybrid", k=10, concurrency=8, split="test",
+                                             fusion_method="weighted", alpha=best_alpha))
+        run_id = save_run(conn, meta, records)
+        print(f"saved tuned weighted run {run_id}: alpha={best_alpha}")
+
+        records, meta = asyncio.run(run_eval("hybrid", k=10, concurrency=8, split="test",
+                                             fusion_method="rrf", rrf_k=best_k))
+        run_id = save_run(conn, meta, records)
+        print(f"saved tuned rrf run {run_id}: k={best_k}")

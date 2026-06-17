@@ -24,8 +24,12 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-DATASET = "beir/nfcorpus/test"
-SPLIT = "test"
+# (dataset_id, split) pairs to ingest. The corpus is shared across splits;
+# only queries/qrels differ. dev is the held-out tuning set, test the report set.
+SPLITS = (
+    ("beir/nfcorpus/test", "test"),
+    ("beir/nfcorpus/dev", "dev"),
+)
 BATCH_SIZE = 1000
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
 
@@ -113,41 +117,51 @@ def upsert(
     log.info("%s: upserted %d rows in %.2fs (%.0f rows/sec)", table, total, elapsed, rate)
     return total
 
-
 def main() -> None:
-    log.info("Loading %s from ir_datasets cache", DATASET)
-    ds = ir_datasets.load(DATASET)
-
-    docs = [
-        DocumentIn(doc_id=d.doc_id, title=d.title, text=d.text, url=getattr(d, "url", None))
-        for d in ds.docs_iter()
-    ]
-    queries = [
-        QueryIn(query_id=q.query_id, text=q.text, url=getattr(q, "url", None))
-        for q in ds.queries_iter()
-    ]
-    qrels = [
-        QrelIn(query_id=r.query_id, doc_id=r.doc_id, relevance=r.relevance)
-        for r in ds.qrels_iter()
-    ]
-    log.info("Validated %d docs, %d queries, %d qrels", len(docs), len(queries), len(qrels))
-
     with connect() as conn:
         apply_schema(conn)
-        # Documents first: qrels FK-reference them.
+
+        # The corpus is identical across splits, so load and upsert documents
+        # exactly once (from the first split). qrels FK-reference documents,
+        # so docs must land before any qrels.
+        first_dataset = SPLITS[0][0]
+        log.info("Loading documents from %s", first_dataset)
+        docs = [
+            DocumentIn(doc_id=d.doc_id, title=d.title, text=d.text, url=getattr(d, "url", None))
+            for d in ir_datasets.load(first_dataset).docs_iter()
+        ]
+        log.info("Validated %d docs", len(docs))
         upsert(
             conn, "documents", ["doc_id", "title", "text", "url"], ["doc_id"],
             [(d.doc_id, d.title, d.text, d.url) for d in docs],
         )
-        upsert(
-            conn, "queries", ["query_id", "split", "text", "url"], ["query_id", "split"],
-            [(q.query_id, SPLIT, q.text, q.url) for q in queries],
-        )
-        upsert(
-            conn, "qrels", ["query_id", "doc_id", "split", "relevance"],
-            ["query_id", "doc_id", "split"],
-            [(r.query_id, r.doc_id, SPLIT, r.relevance) for r in qrels],
-        )
+
+        # Queries + qrels are split-specific. Tag each row with its split so
+        # dev (tuning) and test (reporting) coexist under the (id, split) PKs.
+        for dataset_id, split in SPLITS:
+            log.info("Loading %s queries/qrels from %s", split, dataset_id)
+            ds = ir_datasets.load(dataset_id)
+            queries = [
+                QueryIn(query_id=q.query_id, text=q.text, url=getattr(q, "url", None))
+                for q in ds.queries_iter()
+            ]
+            qrels = [
+                QrelIn(query_id=r.query_id, doc_id=r.doc_id, relevance=r.relevance)
+                for r in ds.qrels_iter()
+            ]
+            log.info(
+                "Validated %d %s queries, %d qrels", len(queries), split, len(qrels)
+            )
+            upsert(
+                conn, "queries", ["query_id", "split", "text", "url"],
+                ["query_id", "split"],
+                [(q.query_id, split, q.text, q.url) for q in queries],
+            )
+            upsert(
+                conn, "qrels", ["query_id", "doc_id", "split", "relevance"],
+                ["query_id", "doc_id", "split"],
+                [(r.query_id, r.doc_id, split, r.relevance) for r in qrels],
+            )
 
     log.info("Ingest complete")
 
