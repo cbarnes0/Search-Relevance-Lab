@@ -52,6 +52,17 @@ export type QueryComparison = {
   b_ndcg: number;
 };
 
+// Mirrors the API's FusionQueryRow model (GET /runs/fusion-compare).
+export type FusionCategory = "beat_both" | "lost_both" | "between" | "tied";
+export type FusionQueryRow = {
+  query_id: string;
+  query_text: string;
+  lexical_ndcg: number;
+  vector_ndcg: number;
+  hybrid_ndcg: number;
+  category: FusionCategory;
+};
+
 // Mirrors the API's drill-down models (GET /runs/{a}/queries/{qid}/compare/{b}).
 export type RankedDoc = {
   rank: number;
