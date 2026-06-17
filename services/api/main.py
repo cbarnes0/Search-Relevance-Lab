@@ -116,6 +116,15 @@ class QueryDrilldown(BaseModel):
     b: list[RankedDoc]
 
 
+class FusionQueryRow(BaseModel):
+    query_id: str
+    query_text: str
+    lexical_ndcg: float
+    vector_ndcg: float
+    hybrid_ndcg: float
+    category: Literal["beat_both", "lost_both", "between", "tied"]
+
+
 # --- Backends: identical output shape, different retrieval ------------------
 async def run_lexical(client: httpx.AsyncClient, q: str, k: int) -> list[SearchResult]:
     resp = await client.get(
@@ -297,6 +306,16 @@ async def check_qdrant() -> bool:
     except Exception:
         return False
 
+EPS = 1e-9
+def categorize(h: float, l: float, v: float) -> str:
+    if abs(h - l) < EPS and abs(h - v) < EPS:
+        return "tied"
+    if h > max(l, v) + EPS:
+        return "beat_both"
+    if h < min(l, v) - EPS:
+        return "lost_both"
+    return "between"
+
 
 @app.get("/health")
 async def health() -> dict:
@@ -348,6 +367,30 @@ async def compare_runs(a: int, b: int) -> list[QueryComparison]:
             b,
         )
         return [QueryComparison(**dict(r)) for r in rows]
+
+@app.get("/runs/fusion-compare")
+async def fusion_compare(hybrid: int, lexical: int, vector: int) -> list[FusionQueryRow]:
+    async with app.state.pool.acquire() as conn: 
+        rows = await conn.fetch(
+            " SELECT q.query_id, q.text AS query_text, "
+                " l.ndcg AS lexical_ndcg, v.ndcg AS vector_ndcg, h.ndcg AS hybrid_ndcg "
+            " FROM eval_results h"
+            " JOIN eval_results l ON l.query_id = h.query_id "
+            " JOIN eval_results v ON v.query_id = h.query_id "
+            " JOIN queries q ON q.query_id = h.query_id AND q.split = 'test' "
+            " WHERE h.run_id = $1 AND l.run_id = $2 AND v.run_id = $3", hybrid, lexical, vector
+        )
+    return [
+        FusionQueryRow(
+            query_id=r["query_id"],
+            query_text=r["query_text"],
+            lexical_ndcg=r["lexical_ndcg"],
+            vector_ndcg=r["vector_ndcg"],
+            hybrid_ndcg=r["hybrid_ndcg"],
+            category=categorize(r["hybrid_ndcg"], r["lexical_ndcg"], r["vector_ndcg"]),
+        )
+        for r in rows
+    ]
 
 
 @app.get("/runs/{a}/queries/{qid}/compare/{b}")
