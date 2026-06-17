@@ -78,6 +78,9 @@ class RunSummary(BaseModel):
     dataset: str
     k: int
     embedding_model: str | None  # NULL for lexical
+    fusion_method: str | None    # NULL for single-backend runs
+    rrf_k: int | None            # set only for fusion_method='rrf'
+    alpha: float | None          # set only for fusion_method='weighted'
     git_sha: str
     concurrency: int
     n_queries: int
@@ -343,6 +346,7 @@ async def list_runs() -> list[RunSummary]:
     async with app.state.pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, created_at, backend, dataset, k, embedding_model, "
+            " fusion_method, rrf_k, alpha, "
             " git_sha, concurrency, n_queries, mean_precision, mean_recall, "
             " mean_mrr, mean_ndcg, latency_p50_ms, latency_p95_ms "
             " FROM eval_runs ORDER BY id DESC "

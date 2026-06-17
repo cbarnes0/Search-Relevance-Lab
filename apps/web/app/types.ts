@@ -23,6 +23,9 @@ export type RunSummary = {
   dataset: string;
   k: number;
   embedding_model: string | null; // null for lexical
+  fusion_method: string | null; // null for single-backend runs
+  rrf_k: number | null; // set only for fusion_method='rrf'
+  alpha: number | null; // set only for fusion_method='weighted'
   git_sha: string;
   concurrency: number;
   n_queries: number;

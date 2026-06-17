@@ -16,6 +16,13 @@ function fmt(n: number): string {
 function fmtNullable(n: number | null): string {
   return n === null ? "—" : n.toFixed(1);
 }
+// Compact fusion descriptor. Single-backend runs (no fusion_method) show an
+// em-dash; rrf/weighted show their tuned knob.
+function fmtFusion(r: RunSummary): string {
+  if (r.fusion_method === "rrf") return `rrf k=${r.rrf_k}`;
+  if (r.fusion_method === "weighted") return `weighted α=${r.alpha}`;
+  return "—";
+}
 
 // Shared cell style so every <td>/<th> lines up without repeating the object.
 const cell: React.CSSProperties = {
@@ -71,6 +78,7 @@ export default async function RunsPage() {
               <th style={leftCell}>backend</th>
               <th style={cell}>k</th>
               <th style={leftCell}>model</th>
+              <th style={leftCell}>fusion</th>
               <th style={cell}>nDCG</th>
               <th style={cell}>P@k</th>
               <th style={cell}>recall</th>
@@ -91,6 +99,7 @@ export default async function RunsPage() {
                 <td style={cell}>{run.k}</td>
                 {/* ?? "—" handles the null embedding_model on lexical runs. */}
                 <td style={leftCell}>{run.embedding_model ?? "—"}</td>
+                <td style={leftCell}>{fmtFusion(run)}</td>
                 <td style={cell}>{fmt(run.mean_ndcg)}</td>
                 <td style={cell}>{fmt(run.mean_precision)}</td>
                 <td style={cell}>{fmt(run.mean_recall)}</td>
