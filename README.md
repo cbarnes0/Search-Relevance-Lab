@@ -2,7 +2,7 @@
 
 A multi-backend search evaluation platform comparing lexical (Typesense), vector (Qdrant), and hybrid retrieval across a real corpus, with retrieval-quality metrics (nDCG, MRR, recall@k) computed against stored relevance judgments.
 
-**Status:** Phase 3 — evaluation harness: every dataset query scored against qrels with nDCG / MRR / recall@k / precision@k, per-query and aggregate results persisted, latency tracked, and a results UI for run history, comparison, and per-query drill-down. (Phase 4 adds hybrid fusion.)
+**Status:** Phase 4 — hybrid fusion: lexical and vector results fused into a single ranking (Reciprocal Rank Fusion and weighted score combination), exposed as `backend=hybrid`, tuned on a held-out dev split and evaluated on test with the existing harness. Tuned weighted fusion (α=0.3) beats both single backends on nDCG. (Phases 1–3: dev environment, two-backend search contract, and the evaluation harness.)
 
 ![Side-by-side lexical vs. vector results for the query "heart attack"](docs/comparison-ui.png)
 
@@ -46,12 +46,19 @@ indexer  ingest.py        ──► Postgres   (documents, queries, qrels)
          index_lexical.py ──► Postgres ─► Typesense   (title, text searchable)
          index_vector.py  ──► Postgres ─► encode ─► Qdrant   (384-dim, cosine)
 
-api  GET /search?q=&backend=lexical|vector&k=10
+api  GET /search?q=&backend=lexical|vector|hybrid&k=10
         lexical: Typesense query
         vector:  embed query ─► Qdrant search
+        hybrid:  run BOTH concurrently (over-fetch 100 each) ─► fuse ─► top-k
+                 fusion_method=rrf (rank-based) | weighted (min-max score, α)
         ─► normalized response { doc_id, title, snippet, score, rank } + latency_ms
 
-web  server-fetches BOTH backends ─► renders two columns side by side
+eval runner.py ─► /search per query ─► score vs qrels ─► Postgres
+        (eval_runs + eval_results); fusion tuned on dev split, reported on test
+
+web  /            server-fetches lexical + vector ─► side-by-side columns
+     /runs        run history, two-run compare, per-query drill-down
+     /runs/fusion lexical vs vector vs hybrid per-query (beat_both / lost_both)
 ```
 
 The embedding model and dimensions are configured via `EMBEDDING_MODEL` / `EMBEDDING_DIM` (env), not hardcoded — they can be swapped without code changes.
@@ -73,8 +80,12 @@ Results land in the `eval_runs` (aggregates, latency p50/p95, git sha) and `eval
 
 | Backend | nDCG@10 | MRR | recall@10 | P@10 | latency p50 |
 |---|---|---|---|---|---|
-| Lexical (Typesense, BM25-style + stemming) | 0.224 | 0.411 | 0.097 | 0.152 | ~110 ms |
-| Vector (Qdrant, bge-small-en-v1.5) | 0.343 | 0.529 | 0.162 | 0.256 | ~880 ms |
+| Lexical (Typesense, BM25-style + stemming) | 0.224 | 0.411 | 0.097 | 0.152 | ~120 ms |
+| Vector (Qdrant, bge-small-en-v1.5) | 0.343 | 0.527 | 0.162 | 0.255 | ~1070 ms |
+| Hybrid — RRF (tuned k=10) | 0.338 | 0.528 | 0.171 | 0.253 | ~1220 ms |
+| **Hybrid — weighted (tuned α=0.3)** | **0.356** | **0.550** | **0.172** | **0.261** | ~1210 ms |
+
+**Headline:** tuned weighted fusion beats both single backends on every relevance metric — nDCG@10 **0.356** vs vector's 0.343 (+3.8%) and lexical's 0.224 (+59%). The weight (α) and RRF constant (k) were tuned on the held-out **dev** split and reported here on **test**, so the gain isn't tuned on the eval set. The improvement is real but *narrow* (paired t-test p≈0.003; ~62% of queries unchanged) — fusion helps the minority of queries where the backends disagree, and helps them more than it hurts the ones it sets back. Notably, **RRF never beats vector even tuned**: rank fusion has no knob to down-weight the weaker lexical arm, whereas weighted fusion's α can.
 
 Published BEIR BM25 baseline for NFCorpus is nDCG@10 ≈ **0.325**. Vector lands on its expected baseline; lexical trails BM25 because Typesense's `text_match` is not canonical Okapi BM25 (different scoring; enabling stemming closed only a small part of the gap). See [`docs/findings.md`](docs/findings.md) for the full write-up.
 
