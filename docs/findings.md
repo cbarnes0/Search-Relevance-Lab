@@ -67,8 +67,20 @@ vector, +59% over lexical) and also wins P@10 and MRR.
 
 ### Honest caveats
 
-- Gain is modest (+0.013 nDCG). **Significance not yet tested** — paired per-query
-  test (run 19 vs run 16) pending in Task 6.
+- **Significance (run 19 hybrid vs run 16 vector, paired on 323 queries):** mean
+  nDCG diff +0.0130 (sd 0.0788). The effect is **narrow, not broad** — 199/323
+  queries unchanged; among the rest hybrid wins 68 / loses 56. Paired t (normal
+  approx) p≈0.003 (significant on the *mean*), but the sign test p≈0.32 (n.s. on
+  the *win/loss count*). Reading: fusion helps a minority of queries and helps them
+  more than it hurts the ones it sets back. The +0.013 headline is real but must
+  not be sold as a broad win. (t-test normality is shaky with 62% ties; Wilcoxon
+  would be the proper arbiter.)
+- **Why the gain is modest = asymmetric arms.** Lexical trails BM25 (Phase 3), so
+  it only rescues vector on the minority of exact-match/keyword queries where term
+  matching beats embeddings. α=0.3 keeps vector dominant, which is what makes the
+  wins large (lexical adds good finds) and the losses small (lexical can't overpower
+  vector). A stronger lexical arm (true BM25) would likely broaden the gains —
+  candidate future work, to confirm via the per-query win/loss view.
 - weighted min-max α=1.0/0.0 endpoints don't exactly reproduce the single backends
   (min-max maps worst→0, ties with missing docs; union pads the tail). Expected.
 - vector/hybrid latency (~1.2 s) is inflated by concurrent CPU encodes on a shared
@@ -76,5 +88,5 @@ vector, +59% over lexical) and also wins P@10 and MRR.
 
 ### Pending (Task 6)
 
-Per-query win/loss analysis; significance test; example queries where fusion helped
-vs. hurt, with a hypothesis why.
+Per-query win/loss view (which queries fusion helped vs. hurt) and a hypothesis for
+why — testing whether the 68 wins cluster on lexical-favoring (exact-match) queries.
