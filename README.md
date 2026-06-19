@@ -2,6 +2,8 @@
 
 A multi-backend search evaluation platform comparing lexical (Typesense), vector (Qdrant), and hybrid retrieval across a real corpus, with retrieval-quality metrics (nDCG, MRR, recall@k) computed against stored relevance judgments.
 
+**Live demo:** <https://search.search-relevance-lab.com>
+
 **Status:** Phase 4 — hybrid fusion: lexical and vector results fused into a single ranking (Reciprocal Rank Fusion and weighted score combination), exposed as `backend=hybrid`, tuned on a held-out dev split and evaluated on test with the existing harness. Tuned weighted fusion (α=0.3) beats both single backends on nDCG. (Phases 1–3: dev environment, two-backend search contract, and the evaluation harness.)
 
 ![Side-by-side lexical vs. vector results for the query "heart attack"](docs/comparison-ui.png)
@@ -147,3 +149,7 @@ Verifies the whole pipeline from empty volumes. Note: `down -v` wipes the databa
 | `make health` | print API health JSON |
 | `make eval-test` / `make eval-lint` | run the eval harness tests / lint |
 | `make logs` / `make ps` | tail logs / list containers |
+
+## Deployment
+
+The live instance runs on a single VM (Docker Compose + Caddy with automatic HTTPS). See [`deployment.md`](deployment.md) for the full production setup.
