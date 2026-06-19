@@ -74,9 +74,6 @@ export default async function FusionPage({
   }>;
 }) {
   const params = await searchParams;
-  const hybrid = Number(params.hybrid);
-  const lexical = Number(params.lexical);
-  const vector = Number(params.vector);
   const filter: Filter = FILTERS.includes(params.filter as Filter)
     ? (params.filter as Filter)
     : "all";
@@ -87,22 +84,34 @@ export default async function FusionPage({
     { label: "Fusion" },
   ];
 
+  // Load runs first so we can fall back to sensible defaults when the URL omits
+  // ids (e.g. the "Fusion" nav link with no query string): the newest lexical
+  // and vector runs, plus the best-scoring hybrid (the tuned winner). /runs
+  // comes back ordered id DESC, so the first match of each backend is newest.
+  // Explicit params still win, so filter pills and deep links are unaffected.
+  const runs = await getRuns();
+  const newestId = (backend: string) =>
+    runs.find((r) => r.backend === backend)?.id;
+  const bestHybridId = [...runs]
+    .filter((r) => r.backend === "hybrid")
+    .sort((a, b) => b.mean_ndcg - a.mean_ndcg)[0]?.id;
+
+  const hybrid = Number(params.hybrid) || bestHybridId;
+  const lexical = Number(params.lexical) || newestId("lexical");
+  const vector = Number(params.vector) || newestId("vector");
+
   if (!hybrid || !lexical || !vector) {
     return (
       <main className="container">
         <Breadcrumbs items={crumbs} />
         <p className="error">
-          Need hybrid, lexical, and vector run ids, e.g.{" "}
-          <code>?hybrid=19&lexical=15&vector=16</code>.
+          No lexical, vector, and hybrid runs are available to compare yet.
         </p>
       </main>
     );
   }
 
-  const [runs, rows] = await Promise.all([
-    getRuns(),
-    getFusion(hybrid, lexical, vector),
-  ]);
+  const rows = await getFusion(hybrid, lexical, vector);
 
   const hybridRun = runs.find((r) => r.id === hybrid) ?? null;
   const lexicalRun = runs.find((r) => r.id === lexical) ?? null;
