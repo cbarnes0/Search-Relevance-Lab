@@ -5,6 +5,9 @@
 # Datasets (downloaded corpus cache — not repo source)
 /data/
 
+# Postgres backup dumps (created on the VM by scripts/backup-postgres.sh)
+/backups/
+
 # Host-side throwaway venv for dataset acquisition
 .venv-host/
 

@@ -1,0 +1,163 @@
+# Production stack for a single-VM deploy. Run this file STANDALONE (not merged
+# with the dev docker-compose.yml):
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Differences from the dev compose:
+#   - no source bind-mounts (the built image is what runs)
+#   - api/web run their production commands (no --reload, `next start` equivalent)
+#   - postgres/typesense/qdrant ports are NOT published to the host — only the
+#     internal compose network can reach them
+#   - Caddy sits in front of web and is the only service exposing 80/443 (it also
+#     gets automatic HTTPS when SITE_ADDRESS is a real domain)
+#
+# A real .env (see .env.example) must sit next to this file.
+
+services:
+  postgres:
+    image: postgres:16.3
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  typesense:
+    image: typesense/typesense:27.1
+    environment:
+      TYPESENSE_DATA_DIR: /data
+      TYPESENSE_API_KEY: ${TYPESENSE_API_KEY}
+    command: --data-dir /data --api-key ${TYPESENSE_API_KEY}
+    volumes:
+      - typesense_data:/data
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8108"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.9.4
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/6333"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  api:
+    build: ./services/api
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TYPESENSE_HOST: typesense
+      TYPESENSE_PORT: 8108
+      TYPESENSE_API_KEY: ${TYPESENSE_API_KEY}
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+      EMBEDDING_DIM: ${EMBEDDING_DIM}
+      HF_HOME: /data/hf_cache
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      # Model weights only — no source mount. The Dockerfile's CMD already runs
+      # uvicorn WITHOUT --reload, so no command override is needed here.
+      - ./data/hf_cache:/data/hf_cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      typesense:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile.prod
+    environment:
+      # Server-side fetches only — resolved inside the compose network at runtime.
+      API_URL: http://api:8000
+      NODE_ENV: production
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.8-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Set to your domain (e.g. search.example.com) for automatic HTTPS, or
+      # leave as :80 to serve plain HTTP (handy for an IP-only smoke test).
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_started
+    restart: unless-stopped
+
+  # One-shot indexer. Not part of the running stack — invoke it once after the
+  # datastores are up to populate them:
+  #   docker compose -f docker-compose.prod.yml --profile tools run --rm indexer <cmd>
+  indexer:
+    build: ./services/indexer
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TYPESENSE_HOST: typesense
+      TYPESENSE_PORT: 8108
+      TYPESENSE_API_KEY: ${TYPESENSE_API_KEY}
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      IR_DATASETS_HOME: /data/ir_datasets
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+      EMBEDDING_DIM: ${EMBEDDING_DIM}
+      HF_HOME: /data/hf_cache
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      - ./data/ir_datasets:/data/ir_datasets
+      - ./data/hf_cache:/data/hf_cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      typesense:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    profiles:
+      - tools
+
+volumes:
+  postgres_data:
+  typesense_data:
+  qdrant_data:
+  caddy_data:
+  caddy_config:

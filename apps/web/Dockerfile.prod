@@ -1,0 +1,37 @@
+# Production image for the Next.js app. The dev Dockerfile just runs `next dev`;
+# this one actually builds and ships a minimal standalone server.
+
+# ---- build stage: full deps + compile ----
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+# Install deps first so this layer caches unless the lockfile changes.
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+# With output:"standalone" in next.config.ts this produces .next/standalone,
+# a self-contained server bundling only the deps the app actually imports.
+RUN npm run build
+
+# ---- runtime stage: slim, non-root ----
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+# Next's standalone server reads PORT (defaults to 3000).
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+# Run as an unprivileged user rather than root.
+RUN addgroup -g 1001 -S nodejs && adduser -u 1001 -S nextjs -G nodejs
+
+# standalone/ contains server.js + its own minimal node_modules. static/ and
+# public/ are NOT included in standalone output and must be copied alongside it.
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+USER nextjs
+EXPOSE 3000
+CMD ["node", "server.js"]

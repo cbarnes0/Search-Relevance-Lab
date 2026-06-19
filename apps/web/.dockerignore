@@ -1,0 +1,11 @@
+# Don't ship the host's installed deps or prior build output into the image —
+# `npm ci` and `next build` regenerate these inside the container.
+node_modules
+.next
+npm-debug.log*
+
+# Local env + misc that shouldn't enter the build context.
+.env*
+.git
+Dockerfile*
+.dockerignore
