@@ -23,6 +23,7 @@ export default function RootLayout({
           <nav className="app-header__nav">
             <Link href="/">Search</Link>
             <Link href="/runs">Runs</Link>
+            <Link href="/runs/fusion">Fusion</Link>
           </nav>
         </header>
         {children}
