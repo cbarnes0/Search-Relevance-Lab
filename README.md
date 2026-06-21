@@ -4,8 +4,6 @@ A multi-backend search evaluation platform comparing lexical (Typesense), vector
 
 **Live demo:** <https://search.search-relevance-lab.com>
 
-**Status:** Phase 4 — hybrid fusion: lexical and vector results fused into a single ranking (Reciprocal Rank Fusion and weighted score combination), exposed as `backend=hybrid`, tuned on a held-out dev split and evaluated on test with the existing harness. Tuned weighted fusion (α=0.3) beats both single backends on nDCG. (Phases 1–3: dev environment, two-backend search contract, and the evaluation harness.)
-
 ![Side-by-side lexical vs. vector results for the query "heart attack"](docs/comparison-ui.png)
 
 The comparison UI for `heart attack`: lexical (Typesense) matches the literal
@@ -65,7 +63,7 @@ web  /            server-fetches lexical + vector ─► side-by-side columns
 
 The embedding model and dimensions are configured via `EMBEDDING_MODEL` / `EMBEDDING_DIM` (env), not hardcoded — they can be swapped without code changes.
 
-## Evaluation (Phase 3)
+## Evaluation
 
 The harness (`services/eval/`) runs every test query through each backend's `/search`, scores the ranked results against the qrels with pure, type-hinted metric functions, and persists per-query and aggregate results to Postgres. The metrics are validated against `pytrec_eval` (trec_eval's C implementation) over 100 randomized cases per metric, so the numbers are trustworthy by construction.
 
